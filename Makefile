@@ -9,11 +9,13 @@ OBJ=\
 	ptrlist.o \
 	builder/symtab.o \
 	builder/file.o \
+	builder/scanner.o \
 	builder/parser.o \
 	builder/parseconv.o \
 	builder.o \
 	mempool.o \
 	program/slope.o \
+	program/param.o \
 	program/wave.o \
 	renderer.o \
 	renderer/generator.o \
@@ -72,16 +74,16 @@ builder.o: builder.c sgensys.h script.h ptrlist.h program.h program/param.h prog
 builder/file.o: builder/file.c builder/file.h common.h
 	$(CC) -c $(CFLAGS) builder/file.c -o builder/file.o
 
-builder/lexer.o: builder/lexer.c builder/lexer.h builder/symtab.h builder/file.h math.h common.h
+builder/lexer.o: builder/lexer.c builder/lexer.h builder/symtab.h builder/scanner.h builder/file.h math.h common.h
 	$(CC) -c $(CFLAGS) builder/lexer.c -o builder/lexer.o
 
 builder/parseconv.o: builder/parseconv.c script.h ptrlist.h program.h program/param.h program/slope.h program/wave.h arrtype.h common.h
 	$(CC) -c $(CFLAGS) builder/parseconv.c -o builder/parseconv.o
 
-builder/parser.o: builder/parser.c script.h ptrlist.h program.h program/param.h program/slope.h program/wave.h builder/symtab.h builder/file.h math.h common.h
+builder/parser.o: builder/parser.c builder/scanner.h builder/file.h builder/symtab.h script.h ptrlist.h program.h program/param.h program/slope.h program/wave.h math.h common.h
 	$(CC) -c $(CFLAGS) builder/parser.c -o builder/parser.o
 
-builder/scanner.o: builder/scanner.c builder/scanner.h builder/file.h builder/symtab.h math.h common.h
+builder/scanner.o: builder/scanner.c builder/scanner.h builder/file.h math.h common.h
 	$(CC) -c $(CFLAGS) builder/scanner.c -o builder/scanner.o
 
 builder/symtab.o: builder/symtab.c builder/symtab.h mempool.h common.h
@@ -95,6 +97,9 @@ ptrlist.o: ptrlist.c ptrlist.h common.h
 
 program/slope.o: program/slope.c program/slope.h math.h common.h
 	$(CC) -c $(CFLAGS) program/slope.c -o program/slope.o
+
+program/param.o: program/param.c program/param.h program/slope.h math.h common.h
+	$(CC) -c $(CFLAGS) program/param.c -o program/param.o
 
 program/wave.o: program/wave.c program/wave.h math.h common.h
 	$(CC) -c $(CFLAGS) program/wave.c -o program/wave.o
