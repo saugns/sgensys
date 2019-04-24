@@ -187,6 +187,8 @@ SAU_File *SAU_create_File(void) SAU__malloclike;
 void SAU_destroy_File(SAU_File *restrict o);
 
 bool SAU_File_fopenrb(SAU_File *restrict o, const char *restrict path);
+bool SAU_File_aopenrb(SAU_File *restrict o,
+		const char *restrict path, const char *restrict str);
 
 void SAU_File_close(SAU_File *restrict o);
 void SAU_File_reset(SAU_File *restrict o);

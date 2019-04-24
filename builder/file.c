@@ -64,11 +64,13 @@ void SAU_destroy_File(SAU_File *restrict o) {
 }
 
 static size_t file_mode_fread(SAU_File *restrict o, SAU_FBufMode *restrict m);
+static size_t file_mode_aread(SAU_File *restrict o, SAU_FBufMode *restrict m);
 
-static void file_ref_close(SAU_File *restrict o);
+static void file_ref_fclose(SAU_File *restrict o);
+static void file_ref_aclose(SAU_File *restrict o);
 
 /**
- * Open file for reading.
+ * Open stdio file for reading.
  *
  * The file is automatically closed when EOF or a read error occurs,
  * but \a path is only cleared with an explicit call to SAU_File_close()
@@ -89,7 +91,33 @@ bool SAU_File_fopenrb(SAU_File *restrict o, const char *restrict path) {
 	o->end_pos = (size_t) -1;
 	o->ref = f;
 	o->path = path;
-	o->close_f = file_ref_close;
+	o->close_f = file_ref_fclose;
+	return true;
+}
+
+/**
+ * Open string as file for reading. The string must be NULL-terminated.
+ * The path is optional and only used to name the file.
+ *
+ * The file is automatically closed upon a NULL byte,
+ * but \a path is only cleared with an explicit call to SAU_File_close()
+ * or SAU_File_reset(), so as to remain available for printing.
+ *
+ * \return true on success
+ */
+bool SAU_File_aopenrb(SAU_File *restrict o,
+		const char *restrict path, const char *restrict str) {
+	SAU_File_close(o);
+
+	if (!str) return false;
+
+	o->mr.call_pos = 0;
+	o->mr.f = file_mode_aread;
+	o->status = SAU_FILE_OK;
+	o->end_pos = (size_t) -1;
+	o->ref = (void*) str;
+	o->path = path;
+	o->close_f = file_ref_aclose;
 	return true;
 }
 
@@ -124,16 +152,13 @@ static void add_end_marker(SAU_File *restrict o, SAU_FBufMode *restrict m,
 }
 
 /*
- * Fill the area of the buffer currently arrived at. This should be
- * called when indicated by SAU_File_NEED_FILL().
+ * Read up to a buffer area of data from a stdio file.
+ * Closes file upon EOF or read error.
  *
- * When EOF or a read error occurs, the file will be closed and
- * the first character after the last one successfully read will
- * be assigned an end marker value. Further calls will reset the
+ * Upon short read, inserts SAU_File_STATUS() value
+ * not counted in return length as an end marker.
+ * If the file is closed, further calls will reset the
  * reading position and write the end marker again.
- *
- * SAU_File_STATUS() will return the same value as the end marker,
- * which is always <= SAU_FILE_MARKER.
  *
  * \return number of characters successfully read
  */
@@ -141,10 +166,6 @@ static size_t file_mode_fread(SAU_File *restrict o, SAU_FBufMode *restrict m) {
 	FILE *f = o->ref;
 	/*
 	 * Set position to the first character of the buffer area.
-	 *
-	 * Read a buffer area's worth of data from the file, if
-	 * open. Upon short read, insert SAU_File_STATUS() value
-	 * not counted in return length. Close file upon end or error.
 	 */
 	m->pos &= (SAU_FBUF_SIZ - 1) & ~(SAU_FBUF_ALEN - 1);
 	if (!f) {
@@ -159,7 +180,7 @@ static size_t file_mode_fread(SAU_File *restrict o, SAU_FBufMode *restrict m) {
 	}
 	if (feof(f)) {
 		o->status |= SAU_FILE_END;
-		file_ref_close(o);
+		file_ref_fclose(o);
 	}
 	if (len < SAU_FBUF_ALEN) {
 		add_end_marker(o, m, len);
@@ -168,13 +189,59 @@ static size_t file_mode_fread(SAU_File *restrict o, SAU_FBufMode *restrict m) {
 }
 
 /*
- * Close file without clearing state.
+ * Read up to a buffer area of data from a string, advancing
+ * the pointer, unless the string is NULL. Closes file
+ * (setting the string to NULL) upon NULL byte.
+ *
+ * Upon short read, inserts SAU_File_STATUS() value
+ * not counted in return length as an end marker.
+ * If the file is closed, further calls will reset the
+ * reading position and write the end marker again.
+ *
+ * \return number of characters successfully read
  */
-static void file_ref_close(SAU_File *restrict o) {
+static size_t file_mode_aread(SAU_File *restrict o, SAU_FBufMode *restrict m) {
+	const char *str = o->ref;
+	/*
+	 * Set position to the first character of the buffer area.
+	 */
+	m->pos &= (SAU_FBUF_SIZ - 1) & ~(SAU_FBUF_ALEN - 1);
+	if (!str) {
+		m->call_pos = m->pos;
+		add_end_marker(o, m, 0);
+		return 0;
+	}
+	size_t len = strlen(str);
+	if (len >= SAU_FBUF_ALEN) {
+		len = SAU_FBUF_ALEN;
+		memcpy(&o->buf[m->pos], str, len);
+		o->ref += len;
+		m->call_pos = (m->pos + len) & (SAU_FBUF_SIZ - 1);
+		return len;
+	}
+	memcpy(&o->buf[m->pos], str, len);
+	o->status |= SAU_FILE_END;
+	file_ref_aclose(o);
+	m->call_pos += len;
+	add_end_marker(o, m, len);
+	return len;
+}
+
+/*
+ * Close stdio file without clearing state.
+ */
+static void file_ref_fclose(SAU_File *restrict o) {
 	if (o->ref != NULL) {
 		fclose(o->ref);
 		o->ref = NULL;
 	}
+}
+
+/*
+ * Close string file by clearing field.
+ */
+static void file_ref_aclose(SAU_File *restrict o) {
+	o->ref = NULL;
 }
 
 #define IS_SPACE(c) ((c) == ' ' || (c) == '\t')
