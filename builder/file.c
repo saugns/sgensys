@@ -63,11 +63,11 @@ void SAU_destroy_File(SAU_File *restrict o) {
 	free(o);
 }
 
-static size_t file_mode_fread(SAU_File *restrict o, SAU_FBufMode *restrict m);
-static size_t file_mode_aread(SAU_File *restrict o, SAU_FBufMode *restrict m);
+static size_t mode_fread(SAU_File *restrict o, SAU_FBufMode *restrict m);
+static size_t mode_aread(SAU_File *restrict o, SAU_FBufMode *restrict m);
 
-static void file_ref_fclose(SAU_File *restrict o);
-static void file_ref_aclose(SAU_File *restrict o);
+static void ref_fclose(SAU_File *restrict o);
+static void ref_aclose(SAU_File *restrict o);
 
 /**
  * Open stdio file for reading.
@@ -86,12 +86,12 @@ bool SAU_File_fopenrb(SAU_File *restrict o, const char *restrict path) {
 	if (!f) return false;
 
 	o->mr.call_pos = 0;
-	o->mr.f = file_mode_fread;
+	o->mr.f = mode_fread;
 	o->status = SAU_FILE_OK;
 	o->end_pos = (size_t) -1;
 	o->ref = f;
 	o->path = path;
-	o->close_f = file_ref_fclose;
+	o->close_f = ref_fclose;
 	return true;
 }
 
@@ -112,12 +112,12 @@ bool SAU_File_aopenrb(SAU_File *restrict o,
 	if (!str) return false;
 
 	o->mr.call_pos = 0;
-	o->mr.f = file_mode_aread;
+	o->mr.f = mode_aread;
 	o->status = SAU_FILE_OK;
 	o->end_pos = (size_t) -1;
 	o->ref = (void*) str;
 	o->path = path;
-	o->close_f = file_ref_aclose;
+	o->close_f = ref_aclose;
 	return true;
 }
 
@@ -162,7 +162,7 @@ static void add_end_marker(SAU_File *restrict o, SAU_FBufMode *restrict m,
  *
  * \return number of characters successfully read
  */
-static size_t file_mode_fread(SAU_File *restrict o, SAU_FBufMode *restrict m) {
+static size_t mode_fread(SAU_File *restrict o, SAU_FBufMode *restrict m) {
 	FILE *f = o->ref;
 	/*
 	 * Set position to the first character of the buffer area.
@@ -180,7 +180,7 @@ static size_t file_mode_fread(SAU_File *restrict o, SAU_FBufMode *restrict m) {
 	}
 	if (feof(f)) {
 		o->status |= SAU_FILE_END;
-		file_ref_fclose(o);
+		ref_fclose(o);
 	}
 	if (len < SAU_FBUF_ALEN) {
 		add_end_marker(o, m, len);
@@ -200,7 +200,7 @@ static size_t file_mode_fread(SAU_File *restrict o, SAU_FBufMode *restrict m) {
  *
  * \return number of characters successfully read
  */
-static size_t file_mode_aread(SAU_File *restrict o, SAU_FBufMode *restrict m) {
+static size_t mode_aread(SAU_File *restrict o, SAU_FBufMode *restrict m) {
 	const char *str = o->ref;
 	/*
 	 * Set position to the first character of the buffer area.
@@ -221,7 +221,7 @@ static size_t file_mode_aread(SAU_File *restrict o, SAU_FBufMode *restrict m) {
 	}
 	memcpy(&o->buf[m->pos], str, len);
 	o->status |= SAU_FILE_END;
-	file_ref_aclose(o);
+	ref_aclose(o);
 	m->call_pos += len;
 	add_end_marker(o, m, len);
 	return len;
@@ -230,7 +230,7 @@ static size_t file_mode_aread(SAU_File *restrict o, SAU_FBufMode *restrict m) {
 /*
  * Close stdio file without clearing state.
  */
-static void file_ref_fclose(SAU_File *restrict o) {
+static void ref_fclose(SAU_File *restrict o) {
 	if (o->ref != NULL) {
 		fclose(o->ref);
 		o->ref = NULL;
@@ -240,7 +240,7 @@ static void file_ref_fclose(SAU_File *restrict o) {
 /*
  * Close string file by clearing field.
  */
-static void file_ref_aclose(SAU_File *restrict o) {
+static void ref_aclose(SAU_File *restrict o) {
 	o->ref = NULL;
 }
 
