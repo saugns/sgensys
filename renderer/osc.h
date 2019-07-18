@@ -57,10 +57,9 @@ static inline void SGS_init_Osc(SGS_Osc *restrict o, uint32_t srate) {
 	};
 }
 
-static inline void SGS_Osc_set_phase(SGS_Osc *restrict o, float phase) {
-	uint32_t prev_phase = o->phase;
-	o->phase = SGS_Osc_PHASE(phase);
-	o->phase_diff += o->phase - prev_phase;
+static inline void SGS_Osc_set_phase(SGS_Osc *restrict o, uint32_t phase) {
+	o->phase_diff += phase - o->phase;
+	o->phase = phase;
 }
 
 static inline void SGS_Osc_set_wave(SGS_Osc *restrict o, uint8_t wave) {
