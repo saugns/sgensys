@@ -54,6 +54,7 @@ typedef struct SAU_ParseOpData {
 	float phase;
 	struct SAU_ParseOpData *op_prev; /* preceding for same op(s) */
 	void *op_conv; // for parseconv
+	void *op_context; // for parseconv
 	/* node adjacents in operator linkage graph */
 	SAU_ParseOpList fmod_list;
 	SAU_ParseOpList pmod_list;
@@ -75,9 +76,11 @@ typedef struct SAU_ParseEvData {
 	/* voice parameters */
 	uint32_t vo_params;
 	struct SAU_ParseEvData *vo_prev; /* preceding event for voice */
+	void *vo_context; // for parseconv
 	SAU_Ramp pan;
 } SAU_ParseEvData;
 
+struct SAU_MemPool;
 struct SAU_SymTab;
 
 /**
@@ -88,7 +91,7 @@ typedef struct SAU_Parse {
 	const char *name; // currently simply set to the filename
 	SAU_ScriptOptions sopt;
 	struct SAU_SymTab *symtab;
-	void *mem; // for internal use
+	struct SAU_MemPool *mem; // internally used, provided until destroy
 } SAU_Parse;
 
 SAU_Parse *SAU_create_Parse(const char *restrict script_arg, bool is_path);

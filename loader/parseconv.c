@@ -12,6 +12,7 @@
  */
 
 #include "parser.h"
+#include "../mempool.h"
 #include <stdlib.h>
 
 /*
@@ -204,7 +205,23 @@ static void flatten_events(SAU_ParseEvData *restrict e) {
 
 typedef struct ParseConv {
 	SAU_ScriptEvData *ev, *first_ev;
+	// for temporary data, instance borrowed from converted SAU_Parse
+	SAU_MemPool *memp;
 } ParseConv;
+
+/*
+ * Per-operator context data for references, used during conversion.
+ */
+typedef struct OpContext {
+	SAU_ParseOpData *newest; // most recent in time-ordered events
+} OpContext;
+
+/*
+ * Per-voice context data for references, used during conversion.
+ */
+typedef struct VoContext {
+	SAU_ParseEvData *newest; // most recent in time-ordered events
+} VoContext;
 
 /*
  * Convert data for an operator node to script operator data,
@@ -234,7 +251,18 @@ static bool ParseConv_add_opdata(ParseConv *restrict o,
 	od->amp = pod->amp;
 	od->amp2 = pod->amp2;
 	od->phase = pod->phase;
-	if (pod->op_prev != NULL) od->op_prev = pod->op_prev->op_conv;
+	OpContext *oc;
+	if (!pod->op_prev) {
+		oc = SAU_MemPool_alloc(o->memp, sizeof(OpContext));
+		if (!oc) goto ERROR;
+	} else {
+		oc = pod->op_prev->op_context;
+		SAU_ScriptOpData *od_prev = oc->newest->op_conv;
+		od->op_prev = od_prev;
+		od_prev->op_flags |= SAU_SDOP_LATER_USED;
+	}
+	oc->newest = pod;
+	pod->op_context = oc;
 	/* op_next */
 	/* fmod_list */
 	/* pmod_list */
@@ -327,13 +355,19 @@ static bool ParseConv_add_event(ParseConv *restrict o,
 	e->wait_ms = pe->wait_ms;
 	e->ev_flags = pe->ev_flags;
 	e->vo_params = pe->vo_params;
-	if (pe->vo_prev != NULL) {
-		e->vo_prev = pe->vo_prev->ev_conv;
-		// TODO: move flag setting from parser
-		//e->vo_prev->ev_flags |= SAU_SDEV_VOICE_LATER_USED;
-	} else {
+	VoContext *vc;
+	if (!pe->vo_prev) {
+		vc = SAU_MemPool_alloc(o->memp, sizeof(VoContext));
+		if (!vc) goto ERROR;
 		e->ev_flags |= SAU_SDEV_NEW_OPGRAPH;
+	} else {
+		vc = pe->vo_prev->vo_context;
+		SAU_ScriptEvData *vo_prev = vc->newest->ev_conv;
+		e->vo_prev = vo_prev;
+		vo_prev->ev_flags |= SAU_SDEV_VOICE_LATER_USED;
 	}
+	vc->newest = pe;
+	pe->vo_context = vc;
 	e->pan = pe->pan;
 	if (!ParseConv_add_ops(o, &pe->op_list)) goto ERROR;
 	if (!ParseConv_link_ops(o, NULL, &pe->op_list)) goto ERROR;
@@ -368,6 +402,7 @@ static SAU_Script *ParseConv_convert(ParseConv *restrict o,
 	 * Flattening must be done following the timing adjustment pass;
 	 * otherwise, cannot always arrange events in the correct order.
 	 */
+	o->memp = p->mem;
 	for (pe = p->events; pe != NULL; pe = pe->next) {
 		if (!ParseConv_add_event(o, pe)) goto ERROR;
 		if (pe->composite != NULL) flatten_events(pe);

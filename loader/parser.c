@@ -678,7 +678,6 @@ static void begin_event(ParseLevel *restrict pl,
 	SAU_Ramp_reset(&e->pan);
 	if (prev_op_ref != NULL) {
 		SAU_ParseEvData *pve = prev_op_ref->data->event;
-		pve->ev_flags |= SAU_SDEV_VOICE_LATER_USED;
 		if (is_composite) {
 			if (!pl->composite) {
 				pve->composite = e;
@@ -686,11 +685,6 @@ static void begin_event(ParseLevel *restrict pl,
 			} else {
 				pve->next = e;
 			}
-		} else if (pve->composite != NULL) {
-			SAU_ParseEvData *last_ce = pve->composite;
-			while (last_ce->next != NULL)
-				last_ce = last_ce->next;
-			last_ce->ev_flags |= SAU_SDEV_VOICE_LATER_USED;
 		}
 		e->vo_prev = pve;
 	} else {
@@ -768,7 +762,6 @@ static void begin_operator(ParseLevel *restrict pl,
 	SAU_Ramp_reset(&op->amp2);
 	if (prev_op_ref != NULL) {
 		SAU_ParseOpData *pop = prev_op_ref->data;
-		pop->op_flags |= SAU_SDOP_LATER_USED;
 		op->op_prev = pop;
 		op->op_flags = pop->op_flags &
 			(SAU_SDOP_NESTED | SAU_SDOP_MULTIPLE);
