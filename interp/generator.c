@@ -134,6 +134,7 @@ static size_t count_ev_values(const SAU_ProgramEvent *restrict e) {
 	}
 	for (size_t i = 0; i < e->op_data_count; ++i) {
 		params = e->op_data[i].params;
+		params &= ~(SAU_POPP_FMODS | SAU_POPP_PMODS | SAU_POPP_AMODS);
 		count += count_flags(params);
 		if ((params & SAU_POPP_FREQ) != 0)
 			count += count_ramp_values(&e->op_data[i].freq) - 1;
@@ -384,9 +385,9 @@ static void handle_event(SAU_Generator *restrict o, EventNode *restrict e) {
 			EventOpData *od = &e->od[i];
 			OperatorNode *on = &o->operators[od->id];
 			params = od->params;
-			on->fmods = od->fmods;
-			on->pmods = od->pmods;
-			on->amods = od->amods;
+			if (od->fmods != NULL) on->fmods = od->fmods;
+			if (od->pmods != NULL) on->pmods = od->pmods;
+			if (od->amods != NULL) on->amods = od->amods;
 			if (params & SAU_POPP_WAVE)
 				on->wave = (*val++).i;
 			if (params & SAU_POPP_TIME)

@@ -128,7 +128,6 @@ static uint32_t VoAlloc_update(VoAlloc *restrict va,
 	e->vo_id = vo_id;
 	VAState *vas = &va->a[vo_id];
 	vas->last_ev = e;
-	if (!vas->op_graph) vas->op_graph = &blank_oplist;
 	vas->flags &= ~VA_OPLIST;
 	if (e->ev_flags & SAU_SDEV_NEW_OPGRAPH)
 		vas->duration_ms = voice_duration(e);
@@ -213,9 +212,6 @@ static uint32_t OpAlloc_update(OpAlloc *restrict oa,
 	od->op_id = op_id;
 	OAState *oas = &oa->a[op_id];
 	oas->last_sod = od;
-	if (!oas->fmods) oas->fmods = &blank_oplist;
-	if (!oas->pmods) oas->pmods = &blank_oplist;
-	if (!oas->amods) oas->amods = &blank_oplist;
 //	oas->duration_ms = od->time_ms;
 	return op_id;
 }
@@ -271,6 +267,8 @@ static void ScriptConv_convert_opdata(ScriptConv *restrict o,
  */
 static inline bool need_new_oplist(const SAU_NodeList *restrict op_list,
 		const SAU_ProgramOpList *restrict prev_pol) {
+	if (!prev_pol)
+		return true;
 	if (!op_list)
 		return false;
 	return (op_list->new_refs != NULL) ||
@@ -298,18 +296,21 @@ static void ScriptConv_convert_ops(ScriptConv *restrict o,
 		if (need_new_oplist(sod->fmods, oas->fmods)) {
 			vas->flags |= VA_OPLIST;
 			oas->fmods = create_ProgramOpList(sod->fmods, o->mem);
+			od->fmods = oas->fmods;
+			od->params |= SAU_POPP_FMODS;
 		}
-		od->fmods = oas->fmods;
 		if (need_new_oplist(sod->pmods, oas->pmods)) {
 			vas->flags |= VA_OPLIST;
 			oas->pmods = create_ProgramOpList(sod->pmods, o->mem);
+			od->pmods = oas->pmods;
+			od->params |= SAU_POPP_PMODS;
 		}
-		od->pmods = oas->pmods;
 		if (need_new_oplist(sod->amods, oas->amods)) {
 			vas->flags |= VA_OPLIST;
 			oas->amods = create_ProgramOpList(sod->amods, o->mem);
+			od->amods = oas->amods;
+			od->params |= SAU_POPP_AMODS;
 		}
-		od->amods = oas->amods;
 	}
 }
 
@@ -562,7 +563,7 @@ void SAU_discard_Program(SAU_Program *restrict o) {
 static void print_linked(const char *restrict header,
 		const char *restrict footer,
 		const SAU_ProgramOpList *restrict list) {
-	if (!list->count)
+	if (!list || !list->count)
 		return;
 	fprintf(stdout, "%s%d", header, list->ids[0]);
 	for (uint32_t i = 0; ++i < list->count; )
