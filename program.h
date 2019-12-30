@@ -39,9 +39,6 @@ enum {
 	SAU_POPP_PHASE = 1<<5,
 	SAU_POPP_AMP = 1<<6,
 	SAU_POPP_AMP2 = 1<<7,
-	SAU_POPP_FMODS = 1<<8,
-	SAU_POPP_PMODS = 1<<9,
-	SAU_POPP_AMODS = 1<<10,
 };
 
 /**

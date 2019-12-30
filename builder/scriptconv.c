@@ -297,19 +297,16 @@ static void ScriptConv_convert_ops(ScriptConv *restrict o,
 			vas->flags |= VA_OPLIST;
 			oas->fmods = create_ProgramOpList(sod->fmods, o->mem);
 			od->fmods = oas->fmods;
-			od->params |= SAU_POPP_FMODS;
 		}
 		if (need_new_oplist(sod->pmods, oas->pmods)) {
 			vas->flags |= VA_OPLIST;
 			oas->pmods = create_ProgramOpList(sod->pmods, o->mem);
 			od->pmods = oas->pmods;
-			od->params |= SAU_POPP_PMODS;
 		}
 		if (need_new_oplist(sod->amods, oas->amods)) {
 			vas->flags |= VA_OPLIST;
 			oas->amods = create_ProgramOpList(sod->amods, o->mem);
 			od->amods = oas->amods;
-			od->params |= SAU_POPP_AMODS;
 		}
 	}
 }
