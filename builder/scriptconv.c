@@ -13,6 +13,7 @@
 
 #include "../script.h"
 #include "../program.h"
+#include "../mempool.h"
 #include "../ptrlist.h"
 #include "../arrtype.h"
 #include <stdlib.h>
@@ -24,15 +25,20 @@
  * Allocation of events, voices, operators.
  */
 
-static sauNoinline SAU_ProgramOpList
-*create_ProgramOpList(const SAU_NodeList *restrict op_list) {
+static const SAU_ProgramOpList blank_oplist = {0};
+
+static sauNoinline const SAU_ProgramOpList
+*create_ProgramOpList(const SAU_NodeList *restrict op_list, SAU_MemPool *mem) {
+	if (!op_list)
+		return &blank_oplist;
 	uint32_t count = 0;
 	for (SAU_NodeRef *ref = op_list->refs; ref != NULL; ref = ref->next)
 		++count;
 	if (count == 0)
-		return NULL;
+		return &blank_oplist;
 	SAU_ProgramOpList *o;
-	o = malloc(sizeof(SAU_ProgramOpList) + sizeof(int32_t) * count);
+	o = SAU_MemPool_alloc(mem,
+			sizeof(SAU_ProgramOpList) + sizeof(uint32_t) * count);
 	if (!o)
 		return NULL;
 	o->count = count;
@@ -56,7 +62,7 @@ enum {
  */
 typedef struct VAState {
 	SAU_ScriptEvData *last_ev;
-	SAU_ProgramOpList *op_graph;
+	const SAU_ProgramOpList *op_graph;
 	uint32_t flags;
 	uint32_t duration_ms;
 } VAState;
@@ -93,7 +99,6 @@ static bool VoAlloc_get_id(VoAlloc *restrict va,
 		VAState *vas = &va->a[id];
 		if (!(vas->last_ev->ev_flags & SAU_SDEV_VOICE_LATER_USED)
 			&& vas->duration_ms == 0) {
-			free(vas->op_graph);
 			*vas = (VAState){0};
 			*vo_id = id;
 			return false;
@@ -123,6 +128,7 @@ static uint32_t VoAlloc_update(VoAlloc *restrict va,
 	e->vo_id = vo_id;
 	VAState *vas = &va->a[vo_id];
 	vas->last_ev = e;
+	if (!vas->op_graph) vas->op_graph = &blank_oplist;
 	vas->flags &= ~VA_OPLIST;
 	if (e->ev_flags & SAU_SDEV_NEW_OPGRAPH)
 		vas->duration_ms = voice_duration(e);
@@ -133,10 +139,6 @@ static uint32_t VoAlloc_update(VoAlloc *restrict va,
  * Clear voice allocator.
  */
 static void VoAlloc_clear(VoAlloc *restrict o) {
-	for (size_t i = 0; i < o->count; ++i) {
-		VAState *vas = &o->a[i];
-		free(vas->op_graph);
-	}
 	_VoAlloc_clear(o);
 }
 
@@ -152,9 +154,9 @@ enum {
  */
 typedef struct OAState {
 	SAU_ScriptOpData *last_sod;
-	SAU_ProgramOpList *fmods;
-	SAU_ProgramOpList *pmods;
-	SAU_ProgramOpList *amods;
+	const SAU_ProgramOpList *fmods;
+	const SAU_ProgramOpList *pmods;
+	const SAU_ProgramOpList *amods;
 	uint32_t flags;
 	//uint32_t duration_ms;
 } OAState;
@@ -178,9 +180,6 @@ static bool OpAlloc_get_id(OpAlloc *restrict oa,
 //		OAState *oas = &oa->a[id];
 //		if (!(oas->last_sod->op_flags & SAU_SDOP_LATER_USED)
 //			&& oas->duration_ms == 0) {
-//			//free(oas->fmods);
-//			//free(oas->pmods);
-//			//free(oas->amods);
 //			*oas = (OAState){0};
 //			*op_id = id;
 //			return false;
@@ -214,6 +213,9 @@ static uint32_t OpAlloc_update(OpAlloc *restrict oa,
 	od->op_id = op_id;
 	OAState *oas = &oa->a[op_id];
 	oas->last_sod = od;
+	if (!oas->fmods) oas->fmods = &blank_oplist;
+	if (!oas->pmods) oas->pmods = &blank_oplist;
+	if (!oas->amods) oas->amods = &blank_oplist;
 //	oas->duration_ms = od->time_ms;
 	return op_id;
 }
@@ -238,6 +240,8 @@ typedef struct ScriptConv {
 	uint32_t op_nest_level;
 	uint32_t op_nest_max;
 	uint32_t duration_ms;
+	SAU_MemPool *mem;
+	SAU_MemPool *tmp; // for allocations not kept in output
 } ScriptConv;
 
 /*
@@ -270,7 +274,7 @@ static inline bool need_new_oplist(const SAU_NodeList *restrict op_list,
 	if (!op_list)
 		return false;
 	return (op_list->new_refs != NULL) ||
-		(prev_pol != NULL && !op_list->refs);
+		((prev_pol->count > 0) && !op_list->refs);
 }
 
 /*
@@ -293,19 +297,19 @@ static void ScriptConv_convert_ops(ScriptConv *restrict o,
 		SAU_ScriptOpData *sod = oas->last_sod;
 		if (need_new_oplist(sod->fmods, oas->fmods)) {
 			vas->flags |= VA_OPLIST;
-			oas->fmods = create_ProgramOpList(sod->fmods);
-			od->fmods = oas->fmods;
+			oas->fmods = create_ProgramOpList(sod->fmods, o->mem);
 		}
+		od->fmods = oas->fmods;
 		if (need_new_oplist(sod->pmods, oas->pmods)) {
 			vas->flags |= VA_OPLIST;
-			oas->pmods = create_ProgramOpList(sod->pmods);
-			od->pmods = oas->pmods;
+			oas->pmods = create_ProgramOpList(sod->pmods, o->mem);
 		}
+		od->pmods = oas->pmods;
 		if (need_new_oplist(sod->amods, oas->amods)) {
 			vas->flags |= VA_OPLIST;
-			oas->amods = create_ProgramOpList(sod->amods);
-			od->amods = oas->amods;
+			oas->amods = create_ProgramOpList(sod->amods, o->mem);
 		}
+		od->amods = oas->amods;
 	}
 }
 
@@ -342,12 +346,9 @@ static void ScriptConv_traverse_op_node(ScriptConv *restrict o,
 	}
 	++o->op_nest_level;
 	oas->flags |= OA_VISITED;
-	if (oas->fmods != NULL)
-		ScriptConv_traverse_op_list(o, oas->fmods, SAU_POP_FMOD);
-	if (oas->pmods != NULL)
-		ScriptConv_traverse_op_list(o, oas->pmods, SAU_POP_PMOD);
-	if (oas->amods != NULL)
-		ScriptConv_traverse_op_list(o, oas->amods, SAU_POP_AMOD);
+	ScriptConv_traverse_op_list(o, oas->fmods, SAU_POP_FMOD);
+	ScriptConv_traverse_op_list(o, oas->pmods, SAU_POP_PMOD);
+	ScriptConv_traverse_op_list(o, oas->amods, SAU_POP_AMOD);
 	oas->flags &= ~OA_VISITED;
 	--o->op_nest_level;
 	OpRefArr_add(&o->ev_vo_oplist, op_ref);
@@ -361,7 +362,7 @@ static void ScriptConv_traverse_op_node(ScriptConv *restrict o,
 static void ScriptConv_traverse_voice(ScriptConv *restrict o,
 		const SAU_ProgramEvent *restrict ev) {
 	VAState *vas = &o->va.a[ev->vo_id];
-	if (!vas->op_graph)
+	if (!vas->op_graph->count)
 		return;
 	ScriptConv_traverse_op_list(o, vas->op_graph, SAU_POP_CARR);
 	SAU_ProgramVoData *vd = (SAU_ProgramVoData*) ev->vo_data;
@@ -371,7 +372,7 @@ static void ScriptConv_traverse_voice(ScriptConv *restrict o,
 }
 
 /*
- * Convert all voice and operator data for a parse event node into a
+ * Convert all voice and operator data for a script event node into a
  * series of output events.
  *
  * This is the "main" per-event conversion function.
@@ -402,8 +403,8 @@ static void ScriptConv_convert_event(ScriptConv *restrict o,
 		ovd->params = vo_params;
 		ovd->pan = e->pan;
 		if (e->ev_flags & SAU_SDEV_NEW_OPGRAPH) {
-			free(vas->op_graph);
-			vas->op_graph = create_ProgramOpList(e->op_graph);
+			vas->op_graph = create_ProgramOpList(e->op_graph,
+							o->tmp);
 		}
 		out_ev->vo_data = ovd;
 		if (vas->flags & VA_OPLIST) {
@@ -415,7 +416,7 @@ static void ScriptConv_convert_event(ScriptConv *restrict o,
 static void Program_destroy_event_data(SAU_ProgramEvent *restrict e);
 
 static SAU_Program *_ScriptConv_copy_out(ScriptConv *restrict o,
-		SAU_Script *restrict parse) {
+		SAU_Script *restrict script) {
 	SAU_Program *prg = NULL;
 	SAU_ProgramEvent *events = NULL;
 	size_t ev_count;
@@ -431,11 +432,11 @@ static SAU_Program *_ScriptConv_copy_out(ScriptConv *restrict o,
 		}
 		o->ev_list.count = 0; // items used, don't destroy them
 	}
-	prg = calloc(1, sizeof(SAU_Program));
+	prg = SAU_MemPool_alloc(o->mem, sizeof(SAU_Program));
 	if (!prg) goto ERROR;
 	prg->events = events;
 	prg->ev_count = ev_count;
-	if (!(parse->sopt.changed & SAU_SOPT_AMPMULT)) {
+	if (!(script->sopt.changed & SAU_SOPT_AMPMULT)) {
 		/*
 		 * Enable amplitude scaling (division) by voice count,
 		 * handled by audio generator.
@@ -445,30 +446,31 @@ static SAU_Program *_ScriptConv_copy_out(ScriptConv *restrict o,
 	if (o->va.count > SAU_PVO_MAX_ID) {
 		fprintf(stderr,
 "%s: error: number of voices used cannot exceed %d\n",
-			parse->name, SAU_PVO_MAX_ID);
+			script->name, SAU_PVO_MAX_ID);
 		goto ERROR;
 	}
 	prg->vo_count = o->va.count;
 	if (o->oa.count > SAU_POP_MAX_ID) {
 		fprintf(stderr,
 "%s: error: number of operators used cannot exceed %d\n",
-			parse->name, SAU_POP_MAX_ID);
+			script->name, SAU_POP_MAX_ID);
 		goto ERROR;
 	}
 	prg->op_count = o->oa.count;
 	if (o->op_nest_max > UINT8_MAX) {
 		fprintf(stderr,
 "%s: error: operators nested %d levels, maximum is %d levels\n",
-			parse->name, o->op_nest_max, UINT8_MAX);
+			script->name, o->op_nest_max, UINT8_MAX);
 		goto ERROR;
 	}
 	prg->op_nest_depth = o->op_nest_max;
 	prg->duration_ms = o->duration_ms;
-	prg->name = parse->name;
+	prg->name = script->name;
+	prg->mem = o->mem;
+	o->mem = NULL; // pass on to program
 	return prg;
 ERROR:
 	free(events);
-	free(prg);
 	return NULL;
 }
 
@@ -492,10 +494,15 @@ static void _ScriptConv_cleanup(ScriptConv *restrict o) {
  * Build program, allocating events, voices, and operators.
  */
 static SAU_Program *ScriptConv_convert(ScriptConv *restrict o,
-		SAU_Script *restrict parse) {
-	SAU_Program *prg;
+		SAU_Script *restrict script) {
+	SAU_Program *prg = NULL;
+	o->mem = SAU_create_MemPool(0);
+	if (!o->mem) goto EXIT;
+	o->tmp = SAU_create_MemPool(0);
+	if (!o->tmp) goto EXIT;
+
 	uint32_t remaining_ms = 0;
-	for (SAU_ScriptEvData *e = parse->events; e; e = e->next) {
+	for (SAU_ScriptEvData *e = script->events; e; e = e->next) {
 		ScriptConv_convert_event(o, e);
 		o->duration_ms += e->wait_ms;
 	}
@@ -506,8 +513,11 @@ static SAU_Program *ScriptConv_convert(ScriptConv *restrict o,
 	}
 	o->duration_ms += remaining_ms;
 
-	prg = _ScriptConv_copy_out(o, parse);
+	prg = _ScriptConv_copy_out(o, script);
 	_ScriptConv_cleanup(o);
+EXIT:
+	SAU_destroy_MemPool(o->mem);
+	SAU_destroy_MemPool(o->tmp);
 	return prg;
 }
 
@@ -530,14 +540,7 @@ static void Program_destroy_event_data(SAU_ProgramEvent *restrict e) {
 		free((void*)e->vo_data->op_list);
 		free((void*)e->vo_data);
 	}
-	if (e->op_data != NULL) {
-		for (size_t i = 0; i < e->op_data_count; ++i) {
-			free((void*)e->op_data[i].fmods);
-			free((void*)e->op_data[i].pmods);
-			free((void*)e->op_data[i].amods);
-		}
-		free((void*)e->op_data);
-	}
+	free((void*)e->op_data);
 }
 
 /**
@@ -553,7 +556,7 @@ void SAU_discard_Program(SAU_Program *restrict o) {
 		}
 		free(o->events);
 	}
-	free(o);
+	SAU_destroy_MemPool(o->mem);
 }
 
 static void print_linked(const char *restrict header,
@@ -661,12 +664,9 @@ void SAU_Program_print_info(const SAU_Program *restrict o) {
 		for (size_t i = 0; i < ev->op_data_count; ++i) {
 			const SAU_ProgramOpData *od = &ev->op_data[i];
 			print_opline(od);
-			if (od->fmods != NULL)
-				print_linked("\n\t    f~[", "]", od->fmods);
-			if (od->pmods != NULL)
-				print_linked("\n\t    p+[", "]", od->pmods);
-			if (od->amods != NULL)
-				print_linked("\n\t    a~[", "]", od->amods);
+			print_linked("\n\t    f~[", "]", od->fmods);
+			print_linked("\n\t    p+[", "]", od->pmods);
+			print_linked("\n\t    a~[", "]", od->amods);
 		}
 		putc('\n', stdout);
 	}

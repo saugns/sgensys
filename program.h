@@ -121,6 +121,8 @@ enum {
 	SAU_PMODE_AMP_DIV_VOICES = 1<<0,
 };
 
+struct SAU_MemPool;
+
 /**
  * Main program type. Contains everything needed for interpretation.
  */
@@ -133,6 +135,7 @@ typedef struct SAU_Program {
 	uint8_t op_nest_depth;
 	uint32_t duration_ms;
 	const char *name;
+	struct SAU_MemPool *mem; // internally used, provided until destroy
 } SAU_Program;
 
 struct SAU_Script;

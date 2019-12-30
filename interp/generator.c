@@ -87,8 +87,6 @@ typedef struct EventNode {
 	uint32_t od_count;
 } EventNode;
 
-static const SAU_ProgramOpList blank_oplist = {0};
-
 struct SAU_Generator {
 	double osc_coeff;
 	uint32_t srate;
@@ -254,9 +252,9 @@ static bool convert_program(SAU_Generator *restrict o,
 			params = pod->params;
 			ev_od->id = op_id;
 			ev_od->params = params;
-			if (pod->fmods != NULL) ev_od->fmods = pod->fmods;
-			if (pod->pmods != NULL) ev_od->pmods = pod->pmods;
-			if (pod->amods != NULL) ev_od->amods = pod->amods;
+			ev_od->fmods = pod->fmods;
+			ev_od->pmods = pod->pmods;
+			ev_od->amods = pod->amods;
 			if (params & SAU_POPP_WAVE)
 				(*ev_v++).i = pod->wave;
 			if (params & SAU_POPP_TIME) {
@@ -386,12 +384,9 @@ static void handle_event(SAU_Generator *restrict o, EventNode *restrict e) {
 			EventOpData *od = &e->od[i];
 			OperatorNode *on = &o->operators[od->id];
 			params = od->params;
-			if (od->fmods != NULL) on->fmods = od->fmods;
-			if (!on->fmods) on->fmods = &blank_oplist;
-			if (od->pmods != NULL) on->pmods = od->pmods;
-			if (!on->pmods) on->pmods = &blank_oplist;
-			if (od->amods != NULL) on->amods = od->amods;
-			if (!on->amods) on->amods = &blank_oplist;
+			on->fmods = od->fmods;
+			on->pmods = od->pmods;
+			on->amods = od->amods;
 			if (params & SAU_POPP_WAVE)
 				on->wave = (*val++).i;
 			if (params & SAU_POPP_TIME)

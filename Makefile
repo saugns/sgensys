@@ -117,7 +117,7 @@ arrtype.o: arrtype.c arrtype.h common.h
 builder/builder.o: builder/builder.c saugns.h script.h ptrlist.h program.h nodelist.h ramp.h wave.h math.h common.h
 	$(CC) -c $(CFLAGS) builder/builder.c -o builder/builder.o
 
-builder/scriptconv.o: builder/scriptconv.c script.h program.h ptrlist.h arrtype.h nodelist.h ramp.h wave.h math.h common.h
+builder/scriptconv.o: builder/scriptconv.c script.h program.h mempool.h ptrlist.h arrtype.h nodelist.h ramp.h wave.h math.h common.h
 	$(CC) -c $(CFLAGS) builder/scriptconv.c -o builder/scriptconv.o
 
 common.o: common.c common.h
