@@ -42,8 +42,7 @@ enum {
  */
 enum {
 	SGS_PVOP_OPLIST = 1<<0,
-	SGS_PVOP_PAN = 1<<1,
-	SGS_PVO_PARAMS = (1<<2) - 1,
+	SGS_PVO_PARAMS = (1<<1) - 1,
 };
 
 /**
@@ -59,7 +58,8 @@ enum {
 	SGS_POPP_PHASE = 1<<6,
 	SGS_POPP_AMP = 1<<7,
 	SGS_POPP_AMP2 = 1<<8,
-	SGS_POP_PARAMS = (1<<9) - 1,
+	SGS_POPP_PAN = 1<<9,
+	SGS_POP_PARAMS = (1<<10) - 1,
 };
 
 /*
@@ -107,7 +107,6 @@ typedef struct SGS_ProgramVoData {
 	const SGS_ProgramOpRef *op_list;
 	uint32_t op_count;
 	uint32_t params;
-	SGS_Ramp pan;
 } SGS_ProgramVoData;
 
 typedef struct SGS_ProgramOpData {
@@ -119,6 +118,7 @@ typedef struct SGS_ProgramOpData {
 	uint8_t wave;
 	SGS_Ramp freq, freq2;
 	SGS_Ramp amp, amp2;
+	SGS_Ramp pan;
 	float phase;
 } SGS_ProgramOpData;
 

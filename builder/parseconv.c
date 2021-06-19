@@ -96,8 +96,8 @@ static uint32_t voice_duration(const SGS_ScriptEvData *restrict ve) {
  */
 static bool SGS_VoAlloc_get_id(SGS_VoAlloc *restrict va,
 		const SGS_ScriptEvData *restrict e, uint32_t *restrict vo_id) {
-	if (e->voice_prev != NULL) {
-		*vo_id = e->voice_prev->vo_id;
+	if (e->root_ev != NULL) {
+		*vo_id = e->root_ev->vo_id;
 		return true;
 	}
 	for (size_t id = 0; id < va->count; ++id) {
@@ -135,7 +135,7 @@ static uint32_t SGS_VoAlloc_update(SGS_VoAlloc *restrict va,
 	SGS_VoAllocState *vas = &va->a[vo_id];
 	vas->last_ev = e;
 	vas->flags &= ~SGS_VAS_GRAPH;
-	if ((e->ev_flags & SGS_SDEV_NEW_OPGRAPH) != 0)
+	if (!e->root_ev)
 		vas->duration_ms = voice_duration(e);
 	return vo_id;
 }
@@ -232,7 +232,7 @@ static void ParseConv_convert_opdata(ParseConv *restrict o,
 	SGS_OpAllocState *oas = &o->oa.a[op_id];
 	SGS_ProgramOpData ood = {0};
 	ood.id = op_id;
-	ood.params = op->op_params;
+	ood.params = op->params;
 	ood.adjcs = NULL;
 	ood.time = op->time;
 	ood.silence_ms = op->silence_ms;
@@ -241,8 +241,9 @@ static void ParseConv_convert_opdata(ParseConv *restrict o,
 	ood.freq2 = op->freq2;
 	ood.amp = op->amp;
 	ood.amp2 = op->amp2;
+	ood.pan = op->pan;
 	ood.phase = op->phase;
-	if ((op->op_params & SGS_POPP_ADJCS) != 0) {
+	if ((op->params & SGS_POPP_ADJCS) != 0) {
 		SGS_VoAllocState *vas = &o->va.a[o->ev->vo_id];
 		vas->flags |= SGS_VAS_GRAPH;
 		oas->adjcs = create_OpAdjcs(op);
@@ -282,7 +283,6 @@ static void ParseConv_convert_ops(ParseConv *restrict o,
 static void ParseConv_convert_event(ParseConv *restrict o,
 		SGS_ScriptEvData *restrict e) {
 	uint32_t vo_id = SGS_VoAlloc_update(&o->va, e);
-	uint32_t vo_params;
 	SGS_VoAllocState *vas = &o->va.a[vo_id];
 	SGS_ProgramEvent *out_ev = calloc(1, sizeof(SGS_ProgramEvent));
 	SGS_PtrList_add(&o->ev_list, out_ev);
@@ -295,16 +295,12 @@ static void ParseConv_convert_event(ParseConv *restrict o,
 		out_ev->op_data_count = o->ev_op_data.count;
 		o->ev_op_data.count = 0; // reuse allocation
 	}
-	vo_params = e->vo_params;
-	if ((e->ev_flags & SGS_SDEV_NEW_OPGRAPH) != 0)
+	if (!e->root_ev)
 		vas->flags |= SGS_VAS_GRAPH;
-	if ((vas->flags & SGS_VAS_GRAPH) != 0)
-		vo_params |= SGS_PVOP_OPLIST;
-	if (vo_params != 0) {
+	if ((vas->flags & SGS_VAS_GRAPH) != 0) {
 		SGS_ProgramVoData *ovd = calloc(1, sizeof(SGS_ProgramVoData));
-		ovd->params = vo_params;
-		ovd->pan = e->pan;
-		if ((e->ev_flags & SGS_SDEV_NEW_OPGRAPH) != 0) {
+		ovd->params = SGS_PVOP_OPLIST;
+		if (!e->root_ev) {
 			if (vas->op_graph != NULL) free(vas->op_graph);
 			vas->op_graph = create_OpGraph(e);
 		}
@@ -338,7 +334,7 @@ static SGS_Program *_ParseConv_copy_out(ParseConv *restrict o,
 	if (!prg) goto ERROR;
 	prg->events = events;
 	prg->ev_count = ev_count;
-	if (!(parse->sopt.changed & SGS_SOPT_AMPMULT)) {
+	if (!(parse->sopt.set & SGS_SOPT_AMPMULT)) {
 		/*
 		 * Enable amplitude scaling (division) by voice count,
 		 * handled by audio generator.

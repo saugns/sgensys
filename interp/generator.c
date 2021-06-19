@@ -239,6 +239,9 @@ static void handle_event(SGS_Generator *restrict o, EventNode *restrict e) {
 		 * Voice updates must be done last, to take into account
 		 * updates for their operators.
 		 */
+		VoiceNode *vn = NULL;
+		if (e->vo_id != SGS_PVO_NO_ID)
+			vn = &o->voices[e->vo_id];
 		for (size_t i = 0; i < e->op_data_count; ++i) {
 			const SGS_ProgramOpData *od = &e->op_data[i];
 			OperatorNode *on = &o->operators[od->id];
@@ -276,18 +279,15 @@ static void handle_event(SGS_Generator *restrict o, EventNode *restrict e) {
 			if (params & SGS_POPP_AMP2)
 				handle_ramp_update(&on->amp2,
 						&on->amp2_pos, &od->amp2);
+			if (params & SGS_POPP_PAN)
+				handle_ramp_update(&vn->pan,
+						&vn->pan_pos, &od->pan);
 		}
-		if (e->vo_id != SGS_PVO_NO_ID) {
-			const SGS_ProgramVoData *vd = e->vo_data;
-			VoiceNode *vn = &o->voices[e->vo_id];
-			uint32_t params = (vd != NULL) ? vd->params : 0;
+		if (vn != NULL) {
 			if (e->op_list != NULL) {
 				vn->op_list = e->op_list;
 				vn->op_count = e->op_count;
 			}
-			if (params & SGS_PVOP_PAN)
-				handle_ramp_update(&vn->pan,
-						&vn->pan_pos, &vd->pan);
 			vn->flags |= VN_INIT;
 			vn->pos = 0;
 			if (o->voice > e->vo_id) {
