@@ -30,7 +30,7 @@ static void time_durgroup(SAU_ParseEvData *restrict e_last) {
 	SAU_ParseDurGroup *dur = e_last->dur;
 	SAU_ParseEvData *e, *e_after = e_last->next;
 	uint32_t wait = 0, waitcount = 0;
-	for (e = dur->range.first; e != e_after /*&& !e*/; ) {
+	for (e = dur->range.first; e != e_after && e != NULL; ) {
 		SAU_ParseOpData *op = e->op_data;
 		if (op != NULL) {
 			if (wait < op->time.v_ms)
@@ -41,7 +41,7 @@ static void time_durgroup(SAU_ParseEvData *restrict e_last) {
 			waitcount += e->wait_ms;
 		}
 	}
-	for (e = dur->range.first; e != e_after /*&& !e*/; ) {
+	for (e = dur->range.first; e != e_after && e != NULL; ) {
 		SAU_ParseOpData *op = e->op_data;
 		if (op != NULL) {
 			if (!(op->time.flags & SAU_TIMEP_SET)) {
@@ -210,6 +210,28 @@ typedef struct ParseConv {
 } ParseConv;
 
 /*
+ * Convert the given event data node and its main data only.
+ */
+static bool ParseConv_add_event(ParseConv *restrict o,
+		SAU_ParseEvData *restrict pe) {
+	SAU_ScriptEvData *e = SAU_MemPool_alloc(o->mem,
+			sizeof(SAU_ScriptEvData));
+	puts("add event");
+	if (!e) goto ERROR;
+	pe->ev_conv = e;
+	if (!o->first_ev)
+		o->first_ev = e;
+	else
+		o->ev->next = e;
+	o->ev = e;
+	e->wait_ms = pe->wait_ms;
+	/* ev_flags */
+	return true;
+ERROR:
+	return false;
+}
+
+/*
  * Per-operator data pointed to by all its nodes during conversion.
  */
 typedef struct OpContext {
@@ -271,6 +293,7 @@ static bool ParseConv_add_opdata(ParseConv *restrict o,
 		SAU_ParseOpData *restrict pod) {
 	SAU_ScriptOpData *od = SAU_MemPool_alloc(o->mem,
 			sizeof(SAU_ScriptOpData));
+	puts("add opdata");
 	if (!od) goto ERROR;
 	SAU_ScriptEvData *e = o->ev;
 	pod->op_conv = od;
@@ -301,34 +324,35 @@ ERROR:
 }
 
 /*
- * Recursively create needed operator data nodes,
- * visiting new operator nodes as they branch out.
+ * Recursively create needed nodes for part of parse.
  */
-static bool ParseConv_add_ops(ParseConv *restrict o,
+static bool ParseConv_add_nodes(ParseConv *restrict o,
 		const SAU_NodeRange *restrict pod_list) {
 	if (!pod_list)
 		return true;
 	SAU_ParseEvData *pe = pod_list->first;
-	if (pe != NULL) for (;;) {
+	SAU_ParseEvData *pe_after = ((SAU_ParseEvData*)pod_list->last)->next;
+	for (; pe != pe_after; pe = pe->next) {
+		if (!ParseConv_add_event(o, pe)) goto ERROR;
 		SAU_ParseOpData *pod = pe->op_data;
-		if (!pod) {goto NEXT;}
+		if (!pod) continue;
 		// TODO: handle multiple operator nodes
 		if (pod->op_flags & SAU_PDOP_MULTIPLE) {
 			// TODO: handle multiple operator nodes
 			pod->op_flags |= SAU_PDOP_IGNORED;
-			goto NEXT;
+			continue;
 		}
 		if (!ParseConv_add_opdata(o, pod)) {
-			if (pod->op_flags & SAU_PDOP_IGNORED) goto NEXT;
+			if (pod->op_flags & SAU_PDOP_IGNORED) continue;
 			goto ERROR;
 		}
 		for (SAU_ParseSublist *scope = pod->nest_scopes;
 				scope != NULL; scope = scope->next) {
-			if (!ParseConv_add_ops(o, &scope->range)) goto ERROR;
+		puts("?");
+		printf("%zx to %zx\n", scope->range.first, scope->range.last);
+			if (!ParseConv_add_nodes(o, &scope->range)) goto ERROR;
+		puts(".");
 		}
-	NEXT:
-		pe = pe->next;
-		if (!pe || pe->wait_ms > 0) break;
 	}
 	return true;
 ERROR:
@@ -336,38 +360,39 @@ ERROR:
 }
 
 /*
- * Recursively fill in lists for operator node graph,
- * visiting all linked operator nodes as they branch out.
+ * Recursively fill in lists for conversion of part of parse after nodes made.
  */
-static bool ParseConv_link_ops(ParseConv *restrict o,
+static bool ParseConv_link_nodes(ParseConv *restrict o,
 		SAU_RefList *restrict *od_list,
 		const SAU_NodeRange *restrict pod_list,
 		uint8_t list_type) {
 	if (!pod_list)
 		return true;
-	SAU_ScriptEvData *e = o->ev;
-	if (list_type != SAU_POP_CARR ||
-			(e->ev_flags & SAU_SDEV_NEW_OPGRAPH) != 0) {
-		*od_list = SAU_create_RefList(list_type, o->mem);
-		if (!*od_list) goto ERROR;
-	}
 	SAU_ParseEvData *pe = pod_list->first;
-	if (pe != NULL) for (;;) {
+	SAU_ParseEvData *pe_after = ((SAU_ParseEvData*)pod_list->last)->next;
+	for (; pe != pe_after; pe = pe->next) {
+		SAU_ScriptEvData *e = pe->ev_conv;
 		SAU_ParseOpData *pod = pe->op_data;
-		if (!pod) {goto NEXT;}
-		if (pod->op_flags & SAU_PDOP_IGNORED) goto NEXT;
+		if (!pod) continue;
+		if (pod->op_flags & SAU_PDOP_IGNORED) continue;
 		SAU_ScriptOpData *od = pod->op_conv;
 		if (!od) goto ERROR;
-		if ((list_type != SAU_POP_CARR ||
-				 ((e->ev_flags & SAU_SDEV_NEW_OPGRAPH) &&
-				  (od->op_flags & SAU_SDOP_ADD_CARRIER))) &&
-				!SAU_RefList_add(*od_list, od, 0, o->mem))
-			goto ERROR;
+		if (list_type != SAU_POP_CARR ||
+				((e->ev_flags & SAU_SDEV_NEW_OPGRAPH) &&
+				 (od->op_flags & SAU_SDOP_ADD_CARRIER))) {
+			if (!*od_list) {
+				*od_list = SAU_create_RefList(list_type,
+						o->mem);
+				if (!*od_list) goto ERROR;
+			}
+			if (!SAU_RefList_add(*od_list, od, 0, o->mem))
+				goto ERROR;
+		}
 		SAU_RefList *last_mod_list = NULL;
 		for (SAU_ParseSublist *scope = pod->nest_scopes;
 				scope != NULL; scope = scope->next) {
 			SAU_RefList *next_mod_list = NULL;
-			if (!ParseConv_link_ops(o, &next_mod_list,
+			if (!ParseConv_link_nodes(o, &next_mod_list,
 						&scope->range,
 						scope->use_type)) goto ERROR;
 			if (!od->mod_lists)
@@ -376,36 +401,7 @@ static bool ParseConv_link_ops(ParseConv *restrict o,
 				last_mod_list->next = next_mod_list;
 			last_mod_list = next_mod_list;
 		}
-	NEXT:
-		pe = pe->next;
-		if (!pe || pe->wait_ms > 0) break;
 	}
-	return true;
-ERROR:
-	return false;
-}
-
-/*
- * Convert the given event data node and all associated operator data nodes.
- */
-static bool ParseConv_add_event(ParseConv *restrict o,
-		SAU_ParseEvData *restrict pe) {
-	SAU_ScriptEvData *e = SAU_MemPool_alloc(o->mem,
-			sizeof(SAU_ScriptEvData));
-	if (!e) goto ERROR;
-	pe->ev_conv = e;
-	if (!o->first_ev)
-		o->first_ev = e;
-	else
-		o->ev->next = e;
-	o->ev = e;
-	e->wait_ms = pe->wait_ms;
-	/* ev_flags */
-	puts("event");
-	const SAU_NodeRange ev_op = {.first = pe, .last = pe->next};
-	if (!ParseConv_add_ops(o, &ev_op)) goto ERROR;
-	if (!ParseConv_link_ops(o, &e->carriers,
-				&ev_op, SAU_POP_CARR)) goto ERROR;
 	return true;
 ERROR:
 	return false;
@@ -447,9 +443,15 @@ static SAU_Script *ParseConv_convert(ParseConv *restrict o,
 	 * otherwise, cannot always arrange events in the correct order.
 	 */
 	for (pe = p->events; pe != NULL; pe = pe->next) {
-		if (!ParseConv_add_event(o, pe)) goto ERROR;
+		puts("t");
+		const SAU_NodeRange pe_range = {.first = pe, .last = pe};
+		if (!ParseConv_add_nodes(o, &pe_range)) goto ERROR;
+		SAU_ScriptEvData *e = pe->ev_conv;
+		if (!ParseConv_link_nodes(o, &e->carriers,
+					&pe_range, SAU_POP_CARR)) goto ERROR;
 		if (pe->composite != NULL) flatten_events(pe);
 	}
+	puts("events converted");
 	s->events = o->first_ev;
 	if (false)
 	ERROR: {
