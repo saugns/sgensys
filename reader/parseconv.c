@@ -91,7 +91,7 @@ static void time_operator(SAU_ParseOpData *restrict op) {
 	for (SAU_ParseSublist *scope = op->nest_scopes;
 			scope != NULL; scope = scope->next) {
 		SAU_ParseEvData *sub_e = scope->range.first;
-		for (; sub_e != NULL; sub_e = sub_e->range_next) {
+		for (; sub_e != NULL; sub_e = sub_e->next) {
 			SAU_ParseOpData *sub_op = sub_e->op_data;
 			time_operator(sub_op);
 		}
@@ -309,23 +309,26 @@ static bool ParseConv_add_ops(ParseConv *restrict o,
 	if (!pod_list)
 		return true;
 	SAU_ParseEvData *pe = pod_list->first;
-	for (; pe != NULL; pe = pe->range_next) {
+	if (pe != NULL) for (;;) {
 		SAU_ParseOpData *pod = pe->op_data;
-		if (!pod) {puts("bail"); if (pe->next) puts("uhh"); if (pe->range_next) puts("iii"); continue;}
+		if (!pod) {goto NEXT;}
 		// TODO: handle multiple operator nodes
 		if (pod->op_flags & SAU_PDOP_MULTIPLE) {
 			// TODO: handle multiple operator nodes
 			pod->op_flags |= SAU_PDOP_IGNORED;
-			continue;
+			goto NEXT;
 		}
 		if (!ParseConv_add_opdata(o, pod)) {
-			if (pod->op_flags & SAU_PDOP_IGNORED) continue;
+			if (pod->op_flags & SAU_PDOP_IGNORED) goto NEXT;
 			goto ERROR;
 		}
 		for (SAU_ParseSublist *scope = pod->nest_scopes;
 				scope != NULL; scope = scope->next) {
 			if (!ParseConv_add_ops(o, &scope->range)) goto ERROR;
 		}
+	NEXT:
+		pe = pe->next;
+		if (!pe || pe->wait_ms > 0) break;
 	}
 	return true;
 ERROR:
@@ -349,10 +352,10 @@ static bool ParseConv_link_ops(ParseConv *restrict o,
 		if (!*od_list) goto ERROR;
 	}
 	SAU_ParseEvData *pe = pod_list->first;
-	for (; pe != NULL; pe = pe->range_next) {
+	if (pe != NULL) for (;;) {
 		SAU_ParseOpData *pod = pe->op_data;
-		if (!pod) {continue;}
-		if (pod->op_flags & SAU_PDOP_IGNORED) continue;
+		if (!pod) {goto NEXT;}
+		if (pod->op_flags & SAU_PDOP_IGNORED) goto NEXT;
 		SAU_ScriptOpData *od = pod->op_conv;
 		if (!od) goto ERROR;
 		if ((list_type != SAU_POP_CARR ||
@@ -373,6 +376,9 @@ static bool ParseConv_link_ops(ParseConv *restrict o,
 				last_mod_list->next = next_mod_list;
 			last_mod_list = next_mod_list;
 		}
+	NEXT:
+		pe = pe->next;
+		if (!pe || pe->wait_ms > 0) break;
 	}
 	return true;
 ERROR:

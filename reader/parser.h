@@ -86,7 +86,7 @@ enum {
  * of the event.
  */
 typedef struct SAU_ParseEvData {
-	struct SAU_ParseEvData *next, *range_next;
+	struct SAU_ParseEvData *next;
 	struct SAU_ParseEvData *composite;
 	SAU_ParseDurGroup *dur;
 	uint32_t wait_ms;

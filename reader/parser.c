@@ -509,7 +509,7 @@ typedef struct SAU_Parser {
 	/* node state */
 	struct ParseLevel *cur_pl;
 	SAU_ParseDurGroup *cur_dur;
-	SAU_ParseEvData *ev, *first_ev;
+	SAU_ParseSublist *events;
 } SAU_Parser;
 
 /*
@@ -583,10 +583,10 @@ struct ParseLevel {
 	ParseLevel_sub_f sub_f; // identifies "location" and implicit context
 	uint32_t pl_flags;
 	uint8_t scope;
+	SAU_ParseSublist *sublist;
 	SAU_ParseEvData *event, *last_event;
 	SAU_ParseOpData *operator, *first_operator, *last_operator;
 	SAU_ParseOpData *parent_op;
-	SAU_ParseSublist *op_scope;
 	SAU_SymStr *set_label; /* label assigned to next node */
 	/* timing/delay */
 	SAU_ParseEvData *composite; /* grouping of events for a voice and/or operator */
@@ -617,7 +617,7 @@ static bool parse_waittime(SAU_Parser *restrict o) {
  * Node- and scope-handling functions
  */
 
-static SAU_ParseSublist *create_op_scope(uint8_t use_type,
+static SAU_ParseSublist *create_sublist(uint8_t use_type,
 		SAU_MemPool *restrict memp) {
 	SAU_ParseSublist *o = SAU_MemPool_alloc(memp, sizeof(SAU_ParseSublist));
 	if (!o)
@@ -702,25 +702,17 @@ static void begin_event(SAU_Parser *restrict o,
 				pope->next = e;
 			}
 		}
-	} else {
-		/*
-		 * Add new node to parent(s) if any.
-		 */
-		if (pl->op_scope != NULL) {
-			SAU_NodeRange *list = &pl->op_scope->range;
-			if (!list->first)
-				list->first = e;
-			else
-				((SAU_ParseEvData*) list->last)->range_next = e;
-			list->last = e;
-		}
 	}
 	if (!is_composite) {
-		if (!o->first_ev)
-			o->first_ev = e;
+		/*
+		 * Append to general list for current parse level.
+		 */
+		SAU_NodeRange *list = &pl->sublist->range;
+		if (!list->first)
+			list->first = e;
 		else
-			o->ev->next = e;
-		o->ev = e;
+			((SAU_ParseEvData*) list->last)->next = e;
+		list->last = e;
 		pl->composite = NULL;
 	}
 	pl->pl_flags |= PL_ACTIVE_EV;
@@ -776,9 +768,7 @@ static void begin_opdata(SAU_Parser *restrict o,
 		op->root_event = (pl->parent_op != NULL) ?
 			pl->parent_op->event :
 			e;
-		op->use_type = (pl->op_scope != NULL) ?
-			pl->op_scope->use_type :
-			SAU_POP_CARR;
+		op->use_type = pl->sublist->use_type;
 		if (op->use_type == SAU_POP_CARR) {
 			op->freq.v0 = sl->sopt.def_freq;
 		} else {
@@ -838,9 +828,7 @@ static void enter_level(SAU_Parser *restrict o, struct ParseLevel *restrict pl,
 	if (!parent_pl) {
 		// handle newscope == SCOPE_TOP here
 		if (!o->cur_dur) new_durgroup(o);
-		if (use_type != SAU_POP_CARR) {
-			pl->op_scope = create_op_scope(use_type, o->mp);
-		}
+		pl->sublist = create_sublist(use_type, o->mp);
 		return;
 	}
 	pl->parent = parent_pl;
@@ -854,15 +842,15 @@ static void enter_level(SAU_Parser *restrict o, struct ParseLevel *restrict pl,
 	case SCOPE_TOP:
 		break; // handled above
 	case SCOPE_BLOCK:
-		pl->op_scope = parent_pl->op_scope;
+		pl->sublist = parent_pl->sublist;
 		break;
 	case SCOPE_BIND:
-		pl->op_scope = create_op_scope(use_type, o->mp);
+		pl->sublist = create_sublist(use_type, o->mp);
 		break;
 	case SCOPE_NEST:
 		pl->pl_flags |= PL_NESTED_SCOPE;
 		pl->parent_op = parent_pl->operator;
-		pl->op_scope = create_op_scope(use_type, o->mp);
+		pl->sublist = create_sublist(use_type, o->mp);
 		break;
 	default:
 		break;
@@ -881,6 +869,7 @@ static void leave_level(SAU_Parser *restrict o) {
 	o->cur_pl = pl->parent;
 	switch (pl->scope) {
 	case SCOPE_TOP:
+		o->events = pl->sublist;
 		break;
 	case SCOPE_BLOCK:
 		if (pl->pl_flags & PL_ACTIVE_EV) {
@@ -907,10 +896,10 @@ static void leave_level(SAU_Parser *restrict o) {
 			break;
 		SAU_ParseOpData *parent_op = pl->parent_op;
 		if (!parent_op->nest_scopes)
-			parent_op->nest_scopes = pl->op_scope;
+			parent_op->nest_scopes = pl->sublist;
 		else
-			parent_op->last_nest_scope->next = pl->op_scope;
-		parent_op->last_nest_scope = pl->op_scope;
+			parent_op->last_nest_scope->next = pl->sublist;
+		parent_op->last_nest_scope = pl->sublist;
 		break; }
 	default:
 		break;
@@ -1298,7 +1287,7 @@ SAU_Parse* SAU_create_Parse(const char *restrict script_arg, bool is_path) {
 	if (!name) goto DONE;
 
 	o = SAU_MemPool_alloc(pr.mp, sizeof(SAU_Parse));
-	o->events = pr.first_ev;
+	o->events = pr.events->range.first;
 	o->name = name;
 	o->sopt = pr.sl.sopt;
 	o->symtab = pr.st;
