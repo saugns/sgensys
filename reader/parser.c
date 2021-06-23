@@ -569,8 +569,9 @@ enum {
 	PL_DEFERRED_SUB  = 1<<0, // \a sub_f exited to attempt handling above
 	PL_BIND_MULTIPLE = 1<<1, // previous node interpreted as set of nodes
 	PL_NESTED_SCOPE  = 1<<2,
-	PL_ACTIVE_EV     = 1<<3,
-	PL_ACTIVE_OP     = 1<<4,
+	PL_OWN_SUBLIST   = 1<<3,
+	PL_OWN_EVENT     = 1<<4,
+	PL_OWN_DATA      = 1<<5,
 };
 
 /*
@@ -617,15 +618,6 @@ static bool parse_waittime(SAU_Parser *restrict o) {
  * Node- and scope-handling functions
  */
 
-static SAU_ParseSublist *create_sublist(uint8_t use_type,
-		SAU_MemPool *restrict memp) {
-	SAU_ParseSublist *o = SAU_MemPool_alloc(memp, sizeof(SAU_ParseSublist));
-	if (!o)
-		return NULL;
-	o->use_type = use_type;
-	return o;
-}
-
 static void new_durgroup(SAU_Parser *restrict o) {
 	SAU_ParseDurGroup *dur = SAU_MemPool_alloc(o->mp,
 			sizeof(SAU_ParseDurGroup));
@@ -634,11 +626,11 @@ static void new_durgroup(SAU_Parser *restrict o) {
 	o->cur_dur = dur;
 }
 
-static void end_opdata(SAU_Parser *restrict o) {
+static void end_ev_opdata(SAU_Parser *restrict o) {
 	struct ParseLevel *pl = o->cur_pl;
-	if (!(pl->pl_flags & PL_ACTIVE_OP))
+	if (!(pl->pl_flags & PL_OWN_DATA))
 		return;
-	pl->pl_flags &= ~PL_ACTIVE_OP;
+	pl->pl_flags &= ~PL_OWN_DATA;
 	ScanLookup *sl = &o->sl;
 	SAU_ParseOpData *op = pl->operator;
 	if (SAU_Ramp_ENABLED(&op->amp)) {
@@ -666,11 +658,11 @@ static void end_opdata(SAU_Parser *restrict o) {
 
 static void end_event(SAU_Parser *restrict o) {
 	struct ParseLevel *pl = o->cur_pl;
-	if (!(pl->pl_flags & PL_ACTIVE_EV))
+	if (!(pl->pl_flags & PL_OWN_EVENT))
 		return;
-	pl->pl_flags &= ~PL_ACTIVE_EV;
+	pl->pl_flags &= ~PL_OWN_EVENT;
 	SAU_ParseEvData *e = pl->event;
-	end_opdata(o);
+	end_ev_opdata(o);
 	SAU_ParseDurGroup *dur = o->cur_dur;
 	if (!dur->range.first)
 		dur->range.first = e;
@@ -715,10 +707,10 @@ static void begin_event(SAU_Parser *restrict o,
 		list->last = e;
 		pl->composite = NULL;
 	}
-	pl->pl_flags |= PL_ACTIVE_EV;
+	pl->pl_flags |= PL_OWN_EVENT;
 }
 
-static void begin_opdata(SAU_Parser *restrict o,
+static void begin_ev_opdata(SAU_Parser *restrict o,
 		SAU_ParseOpData *restrict pop,
 		bool is_composite) {
 	struct ParseLevel *pl = o->cur_pl;
@@ -797,14 +789,14 @@ static void begin_opdata(SAU_Parser *restrict o,
 		op->label = pop->label;
 		op->label->data = op;
 	}
-	pl->pl_flags |= PL_ACTIVE_OP;
+	pl->pl_flags |= PL_OWN_DATA;
 }
 
 /*
  * Begin a new operator - depending on the context, either for the present
  * event or for a new event begun.
  *
- * Used instead of directly calling begin_opdata() and/or begin_event().
+ * Used instead of directly calling begin_event().
  */
 static void begin_node(SAU_Parser *restrict o,
 		SAU_ParseOpData *restrict pop,
@@ -816,7 +808,27 @@ static void begin_node(SAU_Parser *restrict o,
 //			pl->event->op_data != NULL ||
 //			is_composite)
 		begin_event(o, pop, is_composite);
-	begin_opdata(o, pop, is_composite);
+	begin_ev_opdata(o, pop, is_composite);
+}
+
+static void begin_sublist(SAU_Parser *restrict o, uint8_t use_type) {
+	SAU_ParseSublist *list = SAU_MemPool_alloc(o->mp,
+			sizeof(SAU_ParseSublist));
+	if (!list)
+		return;
+	list->use_type = use_type;
+
+	struct ParseLevel *pl = o->cur_pl;
+	pl->pl_flags |= PL_OWN_SUBLIST;
+	pl->sublist = list;
+}
+
+static void end_sublist(SAU_Parser *restrict o) {
+	struct ParseLevel *pl = o->cur_pl;
+	if (!(pl->pl_flags & PL_OWN_SUBLIST))
+		return;
+	pl->pl_flags &= ~PL_OWN_SUBLIST;
+	end_event(o);
 }
 
 static void enter_level(SAU_Parser *restrict o, struct ParseLevel *restrict pl,
@@ -828,7 +840,7 @@ static void enter_level(SAU_Parser *restrict o, struct ParseLevel *restrict pl,
 	if (!parent_pl) {
 		// handle newscope == SCOPE_TOP here
 		if (!o->cur_dur) new_durgroup(o);
-		pl->sublist = create_sublist(use_type, o->mp);
+		begin_sublist(o, use_type);
 		return;
 	}
 	pl->parent = parent_pl;
@@ -845,12 +857,12 @@ static void enter_level(SAU_Parser *restrict o, struct ParseLevel *restrict pl,
 		pl->sublist = parent_pl->sublist;
 		break;
 	case SCOPE_BIND:
-		pl->sublist = create_sublist(use_type, o->mp);
+		begin_sublist(o, use_type);
 		break;
 	case SCOPE_NEST:
 		pl->pl_flags |= PL_NESTED_SCOPE;
 		pl->parent_op = parent_pl->operator;
-		pl->sublist = create_sublist(use_type, o->mp);
+		begin_sublist(o, use_type);
 		break;
 	default:
 		break;
@@ -863,18 +875,16 @@ static void leave_level(SAU_Parser *restrict o) {
 		SAU_Scanner_warning(o->sc, NULL,
 				"ignoring label assignment without operator");
 	}
-	if (pl->scope != SCOPE_BLOCK) {
-		end_event(o);
-	}
+	end_sublist(o);
 	o->cur_pl = pl->parent;
 	switch (pl->scope) {
 	case SCOPE_TOP:
 		o->events = pl->sublist;
 		break;
 	case SCOPE_BLOCK:
-		if (pl->pl_flags & PL_ACTIVE_EV) {
+		if (pl->pl_flags & PL_OWN_EVENT) {
 			end_event(o);
-			pl->parent->pl_flags |= PL_ACTIVE_EV;
+			pl->parent->pl_flags |= PL_OWN_EVENT;
 			pl->parent->event = pl->event;
 		}
 		if (pl->last_event != NULL)
@@ -1295,6 +1305,7 @@ SAU_Parse* SAU_create_Parse(const char *restrict script_arg, bool is_path) {
 	pr.st = NULL; // keep for result
 	pr.mp = NULL; // keep for result
 DONE:
+	puts("done in parser");
 	fini_Parser(&pr);
 	return o;
 }

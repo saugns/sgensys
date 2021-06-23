@@ -30,7 +30,7 @@ static void time_durgroup(SAU_ParseEvData *restrict e_last) {
 	SAU_ParseDurGroup *dur = e_last->dur;
 	SAU_ParseEvData *e, *e_after = e_last->next;
 	uint32_t wait = 0, waitcount = 0;
-	for (e = dur->range.first; e != e_after; ) {
+	for (e = dur->range.first; e != e_after /*&& !e*/; ) {
 		SAU_ParseOpData *op = e->op_data;
 		if (op != NULL) {
 			if (wait < op->time.v_ms)
@@ -41,7 +41,7 @@ static void time_durgroup(SAU_ParseEvData *restrict e_last) {
 			waitcount += e->wait_ms;
 		}
 	}
-	for (e = dur->range.first; e != e_after; ) {
+	for (e = dur->range.first; e != e_after /*&& !e*/; ) {
 		SAU_ParseOpData *op = e->op_data;
 		if (op != NULL) {
 			if (!(op->time.flags & SAU_TIMEP_SET)) {
@@ -424,8 +424,15 @@ static SAU_Script *ParseConv_convert(ParseConv *restrict o,
 	SAU_ParseEvData *pe;
 	for (pe = p->events; pe != NULL; pe = pe->next) {
 		time_event(pe);
-		if (pe == pe->dur->range.last) time_durgroup(pe);
+	puts("test (before)");
+		if (pe == pe->dur->range.last){
+	puts("test (before, 2)");
+			 
+			time_durgroup(pe);
+	puts("test (before, 3)");
+		}
 	}
+	puts("test");
 	o->mem = SAU_create_MemPool(0);
 	o->tmp = p->mem;
 	if (!o->mem || !o->tmp) goto ERROR;
