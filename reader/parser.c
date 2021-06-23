@@ -585,7 +585,7 @@ struct ParseLevel {
 	uint8_t scope;
 	SAU_ParseEvData *event, *last_event;
 	SAU_ParseOpData *operator, *first_operator, *last_operator;
-	SAU_ParseOpData *parent_op, *op_prev;
+	SAU_ParseOpData *parent_op;
 	SAU_ParseSublist *op_scope;
 	SAU_SymStr *set_label; /* label assigned to next node */
 	/* timing/delay */
@@ -634,7 +634,7 @@ static void new_durgroup(SAU_Parser *restrict o) {
 	o->cur_dur = dur;
 }
 
-static void end_operator(SAU_Parser *restrict o) {
+static void end_opdata(SAU_Parser *restrict o) {
 	struct ParseLevel *pl = o->cur_pl;
 	if (!(pl->pl_flags & PL_ACTIVE_OP))
 		return;
@@ -670,16 +670,20 @@ static void end_event(SAU_Parser *restrict o) {
 		return;
 	pl->pl_flags &= ~PL_ACTIVE_EV;
 	SAU_ParseEvData *e = pl->event;
-	end_operator(o);
+	end_opdata(o);
 	SAU_ParseDurGroup *dur = o->cur_dur;
 	if (!dur->range.first)
 		dur->range.first = e;
 	dur->range.last = (pl->composite != NULL) ? pl->composite : e;
 	pl->last_event = e;
 	pl->event = NULL;
+	static int eventcount = 0;
+	printf("end_event() %d\n", ++eventcount);
+	if (!e->op_data) printf("\tNULL\n");
 }
 
 static void begin_event(SAU_Parser *restrict o,
+		SAU_ParseOpData *restrict pop,
 		bool is_composite) {
 	struct ParseLevel *pl = o->cur_pl;
 	end_event(o);
@@ -688,8 +692,8 @@ static void begin_event(SAU_Parser *restrict o,
 	e->dur = o->cur_dur;
 	e->wait_ms = pl->next_wait_ms;
 	pl->next_wait_ms = 0;
-	if (pl->op_prev != NULL) {
-		SAU_ParseEvData *pope = pl->op_prev->event;
+	if (pop != NULL) {
+		SAU_ParseEvData *pope = pop->event;
 		if (is_composite) {
 			if (!pl->composite) {
 				pope->composite = e;
@@ -697,6 +701,18 @@ static void begin_event(SAU_Parser *restrict o,
 			} else {
 				pope->next = e;
 			}
+		}
+	} else {
+		/*
+		 * Add new node to parent(s) if any.
+		 */
+		if (pl->op_scope != NULL) {
+			SAU_NodeRange *list = &pl->op_scope->range;
+			if (!list->first)
+				list->first = e;
+			else
+				((SAU_ParseEvData*) list->last)->range_next = e;
+			list->last = e;
 		}
 	}
 	if (!is_composite) {
@@ -710,16 +726,12 @@ static void begin_event(SAU_Parser *restrict o,
 	pl->pl_flags |= PL_ACTIVE_EV;
 }
 
-static void begin_operator(SAU_Parser *restrict o,
+static void begin_opdata(SAU_Parser *restrict o,
+		SAU_ParseOpData *restrict pop,
 		bool is_composite) {
 	struct ParseLevel *pl = o->cur_pl;
 	ScanLookup *sl = &o->sl;
 	SAU_ParseEvData *e = pl->event;
-	SAU_ParseOpData *pop = pl->op_prev;
-	/*
-	 * It is assumed that a valid voice event exists.
-	 */
-	end_operator(o);
 	SAU_ParseOpData *op = SAU_MemPool_alloc(o->mp, sizeof(SAU_ParseOpData));
 	pl->operator = op;
 	if (!pl->first_operator)
@@ -781,21 +793,7 @@ static void begin_operator(SAU_Parser *restrict o,
 		op->pan.flags |= SAU_RAMPP_STATE;
 	}
 	op->event = e;
-	/*
-	 * Add new operator to parent(s), ie. either the current event node,
-	 * or an operator node (either ordinary or representing multiple
-	 * carriers) in the case of operator linking/nesting.
-	 */
-	if (!pop && pl->op_scope != NULL) {
-		SAU_NodeRange *list = &pl->op_scope->range;
-		if (!list->first)
-			list->first = op;
-		else
-			((SAU_ParseOpData*) list->last)->range_next = op;
-		list->last = op;
-	} else {
-		e->op_data = op;
-	}
+	e->op_data = op;
 	/*
 	 * Assign label. If no new label but previous node
 	 * (for a non-composite) has one, update label to
@@ -816,21 +814,19 @@ static void begin_operator(SAU_Parser *restrict o,
  * Begin a new operator - depending on the context, either for the present
  * event or for a new event begun.
  *
- * Used instead of directly calling begin_operator() and/or begin_event().
+ * Used instead of directly calling begin_opdata() and/or begin_event().
  */
 static void begin_node(SAU_Parser *restrict o,
 		SAU_ParseOpData *restrict pop,
 		bool is_composite) {
-	struct ParseLevel *pl = o->cur_pl;
-	pl->op_prev = pop;
-	if (!pl->event || /* not in event parse means event now ended */
-			pl->sub_f != parse_in_event ||
-			pl->next_wait_ms ||
-			(!(!pop && pl->op_scope != NULL) &&
-			 pl->event->op_data != NULL) ||
-			is_composite)
-		begin_event(o, is_composite);
-	begin_operator(o, is_composite);
+//	struct ParseLevel *pl = o->cur_pl;
+//	if (!pl->event || /* not in event parse means event now ended */
+//			pl->sub_f != parse_in_event ||
+//			pl->next_wait_ms ||
+//			pl->event->op_data != NULL ||
+//			is_composite)
+		begin_event(o, pop, is_composite);
+	begin_opdata(o, pop, is_composite);
 }
 
 static void enter_level(SAU_Parser *restrict o, struct ParseLevel *restrict pl,
@@ -875,22 +871,17 @@ static void enter_level(SAU_Parser *restrict o, struct ParseLevel *restrict pl,
 
 static void leave_level(SAU_Parser *restrict o) {
 	struct ParseLevel *pl = o->cur_pl;
-	end_operator(o);
 	if (pl->set_label != NULL) {
 		SAU_Scanner_warning(o->sc, NULL,
 				"ignoring label assignment without operator");
 	}
-	if (!pl->parent) {
-		/*
-		 * At end of top scope, i.e. at end of script,
-		 * end last event and adjust timing.
-		 */
+	if (pl->scope != SCOPE_BLOCK) {
 		end_event(o);
 	}
 	o->cur_pl = pl->parent;
 	switch (pl->scope) {
 	case SCOPE_TOP:
-		break; // handled above
+		break;
 	case SCOPE_BLOCK:
 		if (pl->pl_flags & PL_ACTIVE_EV) {
 			end_event(o);
@@ -1176,7 +1167,7 @@ static void parse_level(SAU_Parser *restrict o,
 			break;
 		case '@':
 			if (SAU_Scanner_tryc(sc, '[')) {
-				end_operator(o);
+				end_event(o);
 				parse_level(o, use_type, SCOPE_BIND);
 				/*
 				 * Multiple-operator node now open.
@@ -1227,9 +1218,6 @@ static void parse_level(SAU_Parser *restrict o,
 			parse_waittime(o);
 			break;
 		case ']':
-			if (pl.scope == SCOPE_NEST) {
-				end_operator(o);
-			}
 			if (pl.scope > SCOPE_BLOCK) {
 				goto RETURN;
 			}
