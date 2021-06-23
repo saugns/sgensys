@@ -78,6 +78,7 @@ static void time_operator(SAU_ParseOpData *restrict op) {
 		time_ramp(&op->freq2, op->time.v_ms);
 		time_ramp(&op->amp, op->time.v_ms);
 		time_ramp(&op->amp2, op->time.v_ms);
+		// op->pan.flags |= SAU_RAMPP_TIME; // TODO: revisit semantics
 		if (!(op->op_flags & SAU_PDOP_SILENCE_ADDED)) {
 			op->time.v_ms += op->silence_ms;
 			op->op_flags |= SAU_PDOP_SILENCE_ADDED;
@@ -103,7 +104,6 @@ static void time_event(SAU_ParseEvData *restrict e) {
 	 * Adjust default ramp durations, handle silence as well as the case of
 	 * adding present event duration to wait time of next event.
 	 */
-	// e->pan.flags |= SAU_RAMPP_TIME; // TODO: revisit semantics
 	SAU_ParseOpData *op;
 	op = e->op_data;
 	if (op != NULL) {
@@ -402,7 +402,7 @@ static bool ParseConv_add_event(ParseConv *restrict o,
 	e->wait_ms = pe->wait_ms;
 	/* ev_flags */
 	puts("event");
-	const SAU_NodeRange ev_op = {.first = pe};
+	const SAU_NodeRange ev_op = {.first = pe, .last = pe->next};
 	if (!ParseConv_add_ops(o, &ev_op)) goto ERROR;
 	if (!ParseConv_link_ops(o, &e->carriers,
 				&ev_op, SAU_POP_CARR)) goto ERROR;
