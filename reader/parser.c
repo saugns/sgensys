@@ -668,6 +668,7 @@ static void end_event(SAU_Parser *restrict o) {
 	end_ev_opdata(o);
 	pl->last_event = e;
 	pl->event = NULL;
+	static int count = 0; ++count; printf("end_event() %d\n", count);
 }
 
 static void begin_event(SAU_Parser *restrict o,
@@ -837,13 +838,12 @@ static void end_sublist(SAU_Parser *restrict o) {
 	if (!e)
 		return;
 	SAU_ParseEvData *e_after = ((SAU_ParseEvData*)list->range.last)->next;
-/*	for (; e != e_after; e = e->next) {
+	for (; e != e_after; e = e->next) {
 		time_event(e);
 		if (e->dur != NULL && e == e->dur->range.last){
 			time_durgroup(e);
 		}
 	}
-	*/
 }
 
 static void enter_level(SAU_Parser *restrict o, struct ParseLevel *restrict pl,
