@@ -30,7 +30,7 @@ static void time_durgroup(SAU_ParseEvData *restrict e_last) {
 	SAU_ParseDurGroup *dur = e_last->dur;
 	SAU_ParseEvData *e, *e_after = e_last->next;
 	uint32_t wait = 0, waitcount = 0;
-	for (e = dur->range.first; e != e_after && e != NULL; ) {
+	for (e = dur->range.first; e != e_after; ) {
 		SAU_ParseOpData *op = e->op_data;
 		if (op != NULL) {
 			if (wait < op->time.v_ms)
@@ -41,7 +41,7 @@ static void time_durgroup(SAU_ParseEvData *restrict e_last) {
 			waitcount += e->wait_ms;
 		}
 	}
-	for (e = dur->range.first; e != e_after && e != NULL; ) {
+	for (e = dur->range.first; e != e_after; ) {
 		SAU_ParseOpData *op = e->op_data;
 		if (op != NULL) {
 			if (!(op->time.flags & SAU_TIMEP_SET)) {
@@ -216,7 +216,6 @@ static bool ParseConv_add_event(ParseConv *restrict o,
 		SAU_ParseEvData *restrict pe) {
 	SAU_ScriptEvData *e = SAU_MemPool_alloc(o->mem,
 			sizeof(SAU_ScriptEvData));
-	puts("add event");
 	if (!e) goto ERROR;
 	pe->ev_conv = e;
 	if (!o->first_ev)
@@ -293,7 +292,6 @@ static bool ParseConv_add_opdata(ParseConv *restrict o,
 		SAU_ParseOpData *restrict pod) {
 	SAU_ScriptOpData *od = SAU_MemPool_alloc(o->mem,
 			sizeof(SAU_ScriptOpData));
-	puts("add opdata");
 	if (!od) goto ERROR;
 	SAU_ScriptEvData *e = o->ev;
 	pod->op_conv = od;
@@ -333,7 +331,7 @@ static bool ParseConv_add_nodes(ParseConv *restrict o,
 	SAU_ParseEvData *pe = pod_list->first;
 	SAU_ParseEvData *pe_after = ((SAU_ParseEvData*)pod_list->last)->next;
 	for (; pe != pe_after; pe = pe->next) {
-		if (!ParseConv_add_event(o, pe)) goto ERROR;
+		//if (!ParseConv_add_event(o, pe)) goto ERROR;
 		SAU_ParseOpData *pod = pe->op_data;
 		if (!pod) continue;
 		// TODO: handle multiple operator nodes
@@ -348,10 +346,7 @@ static bool ParseConv_add_nodes(ParseConv *restrict o,
 		}
 		for (SAU_ParseSublist *scope = pod->nest_scopes;
 				scope != NULL; scope = scope->next) {
-		puts("?");
-		printf("%zx to %zx\n", scope->range.first, scope->range.last);
 			if (!ParseConv_add_nodes(o, &scope->range)) goto ERROR;
-		puts(".");
 		}
 	}
 	return true;
@@ -420,12 +415,8 @@ static SAU_Script *ParseConv_convert(ParseConv *restrict o,
 	SAU_ParseEvData *pe;
 	for (pe = p->events; pe != NULL; pe = pe->next) {
 		time_event(pe);
-	puts("test (before)");
 		if (pe == pe->dur->range.last){
-	puts("test (before, 2)");
-			 
 			time_durgroup(pe);
-	puts("test (before, 3)");
 		}
 	}
 	puts("test");
@@ -443,8 +434,8 @@ static SAU_Script *ParseConv_convert(ParseConv *restrict o,
 	 * otherwise, cannot always arrange events in the correct order.
 	 */
 	for (pe = p->events; pe != NULL; pe = pe->next) {
-		puts("t");
 		const SAU_NodeRange pe_range = {.first = pe, .last = pe};
+		if (!ParseConv_add_event(o, pe)) goto ERROR;
 		if (!ParseConv_add_nodes(o, &pe_range)) goto ERROR;
 		SAU_ScriptEvData *e = pe->ev_conv;
 		if (!ParseConv_link_nodes(o, &e->carriers,

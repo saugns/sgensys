@@ -618,6 +618,9 @@ static bool parse_waittime(SAU_Parser *restrict o) {
  * Node- and scope-handling functions
  */
 
+static void time_event(SAU_ParseEvData *restrict e);
+static void time_durgroup(SAU_ParseEvData *restrict e_last);
+
 static void new_durgroup(SAU_Parser *restrict o) {
 	SAU_ParseDurGroup *dur = SAU_MemPool_alloc(o->mp,
 			sizeof(SAU_ParseDurGroup));
@@ -663,15 +666,8 @@ static void end_event(SAU_Parser *restrict o) {
 	pl->pl_flags &= ~PL_OWN_EVENT;
 	SAU_ParseEvData *e = pl->event;
 	end_ev_opdata(o);
-	SAU_ParseDurGroup *dur = o->cur_dur;
-	if (!dur->range.first)
-		dur->range.first = e;
-	dur->range.last = (pl->composite != NULL) ? pl->composite : e;
 	pl->last_event = e;
 	pl->event = NULL;
-	static int eventcount = 0;
-	printf("end_event() %d\n", ++eventcount);
-	if (!e->op_data) printf("\tNULL\n");
 }
 
 static void begin_event(SAU_Parser *restrict o,
@@ -681,7 +677,6 @@ static void begin_event(SAU_Parser *restrict o,
 	end_event(o);
 	SAU_ParseEvData *e = SAU_MemPool_alloc(o->mp, sizeof(SAU_ParseEvData));
 	pl->event = e;
-	e->dur = o->cur_dur;
 	e->wait_ms = pl->next_wait_ms;
 	pl->next_wait_ms = 0;
 	if (pop != NULL) {
@@ -706,6 +701,13 @@ static void begin_event(SAU_Parser *restrict o,
 			((SAU_ParseEvData*) list->last)->next = e;
 		list->last = e;
 		pl->composite = NULL;
+	}
+	if (!(pl->pl_flags & PL_NESTED_SCOPE)) {
+		SAU_ParseDurGroup *dur = o->cur_dur;
+		e->dur = dur;
+		if (!dur->range.first)
+			dur->range.first = e;
+		dur->range.last = (pl->composite != NULL) ? pl->composite : e;
 	}
 	pl->pl_flags |= PL_OWN_EVENT;
 }
@@ -829,6 +831,19 @@ static void end_sublist(SAU_Parser *restrict o) {
 		return;
 	pl->pl_flags &= ~PL_OWN_SUBLIST;
 	end_event(o);
+
+	SAU_ParseSublist *list = pl->sublist;
+	SAU_ParseEvData *e = list->range.first;
+	if (!e)
+		return;
+	SAU_ParseEvData *e_after = ((SAU_ParseEvData*)list->range.last)->next;
+/*	for (; e != e_after; e = e->next) {
+		time_event(e);
+		if (e->dur != NULL && e == e->dur->range.last){
+			time_durgroup(e);
+		}
+	}
+	*/
 }
 
 static void enter_level(SAU_Parser *restrict o, struct ParseLevel *restrict pl,
@@ -1281,6 +1296,130 @@ static const char *parse_file(SAU_Parser *restrict o,
 	return name;
 }
 
+/*
+ * Adjust timing for a duration group; the script syntax for time grouping is
+ * only allowed on the "top" operator level, so the algorithm only deals with
+ * this for the events involved.
+ */
+static void time_durgroup(SAU_ParseEvData *restrict e_last) {
+	SAU_ParseDurGroup *dur = e_last->dur;
+	SAU_ParseEvData *e, *e_after = e_last->next;
+	uint32_t wait = 0, waitcount = 0;
+	for (e = dur->range.first; e != e_after; ) {
+		SAU_ParseOpData *op = e->op_data;
+		if (op != NULL) {
+			if (wait < op->time.v_ms)
+				wait = op->time.v_ms;
+		}
+		e = e->next;
+		if (e != NULL) {
+			waitcount += e->wait_ms;
+		}
+	}
+	for (e = dur->range.first; e != e_after; ) {
+		SAU_ParseOpData *op = e->op_data;
+		if (op != NULL) {
+			if (!(op->time.flags & SAU_TIMEP_SET)) {
+				/* fill in sensible default time */
+				op->time.v_ms = wait + waitcount;
+				op->time.flags |= SAU_TIMEP_SET;
+			}
+		}
+		e = e->next;
+		if (e != NULL) {
+			waitcount -= e->wait_ms;
+		}
+	}
+	if (e_after != NULL)
+		e_after->wait_ms += wait;
+}
+
+static inline void time_ramp(SAU_Ramp *restrict ramp,
+		uint32_t default_time_ms) {
+	if (!(ramp->flags & SAU_RAMPP_TIME))
+		ramp->time_ms = default_time_ms;
+}
+
+static void time_opdata(SAU_ParseOpData *restrict op) {
+	SAU_ParseEvData *e = op->event;
+	if ((op->op_flags & SAU_PDOP_NESTED) != 0 &&
+			!(op->time.flags & SAU_TIMEP_SET)) {
+		if (!(op->op_flags & SAU_PDOP_HAS_COMPOSITE))
+			op->time.flags |= SAU_TIMEP_LINKED;
+		op->time.flags |= SAU_TIMEP_SET;
+	}
+	if (!(op->time.flags & SAU_TIMEP_LINKED)) {
+		time_ramp(&op->freq, op->time.v_ms);
+		time_ramp(&op->freq2, op->time.v_ms);
+		time_ramp(&op->amp, op->time.v_ms);
+		time_ramp(&op->amp2, op->time.v_ms);
+		// op->pan.flags |= SAU_RAMPP_TIME; // TODO: revisit semantics
+		if (!(op->op_flags & SAU_PDOP_SILENCE_ADDED)) {
+			op->time.v_ms += op->silence_ms;
+			op->op_flags |= SAU_PDOP_SILENCE_ADDED;
+		}
+	}
+	if ((e->ev_flags & SAU_PDEV_ADD_WAIT_DURATION) != 0) {
+		if (e->next != NULL)
+			e->next->wait_ms += op->time.v_ms;
+		e->ev_flags &= ~SAU_PDEV_ADD_WAIT_DURATION;
+	}
+	for (SAU_ParseSublist *scope = op->nest_scopes;
+			scope != NULL; scope = scope->next) {
+		SAU_ParseEvData *sub_e = scope->range.first;
+		for (; sub_e != NULL; sub_e = sub_e->next) {
+			SAU_ParseOpData *sub_op = sub_e->op_data;
+			time_opdata(sub_op);
+		}
+	}
+}
+
+static void time_event(SAU_ParseEvData *restrict e) {
+	/*
+	 * Adjust default ramp durations, handle silence as well as the case of
+	 * adding present event duration to wait time of next event.
+	 */
+	SAU_ParseOpData *op;
+	op = e->op_data;
+	if (op != NULL) {
+		time_opdata(op);
+	}
+	/*
+	 * Timing for composites - done before event list flattened.
+	 */
+	if (e->composite != NULL) {
+		SAU_ParseEvData *ce = e->composite;
+		SAU_ParseOpData *ce_op, *ce_op_prev, *e_op;
+		ce_op = ce->op_data;
+		ce_op_prev = ce_op->prev;
+		e_op = ce_op_prev;
+		e_op->time.flags |= SAU_TIMEP_SET; /* always used from now on */
+		for (;;) {
+			ce->wait_ms += ce_op_prev->time.v_ms;
+			if (!(ce_op->time.flags & SAU_TIMEP_SET)) {
+				ce_op->time.flags |= SAU_TIMEP_SET;
+				if ((ce_op->op_flags &
+(SAU_PDOP_NESTED | SAU_PDOP_HAS_COMPOSITE)) == SAU_PDOP_NESTED)
+					ce_op->time.flags |= SAU_TIMEP_LINKED;
+				else
+					ce_op->time.v_ms = ce_op_prev->time.v_ms
+						- ce_op_prev->silence_ms;
+			}
+			time_event(ce);
+			if (ce_op->time.flags & SAU_TIMEP_LINKED)
+				e_op->time.flags |= SAU_TIMEP_LINKED;
+			else if (!(e_op->time.flags & SAU_TIMEP_LINKED))
+				e_op->time.v_ms += ce_op->time.v_ms +
+					(ce->wait_ms - ce_op_prev->time.v_ms);
+			ce_op->params.set &= ~SAU_POPP_TIME;
+			ce_op_prev = ce_op;
+			ce = ce->next;
+			if (!ce) break;
+			ce_op = ce->op_data;
+		}
+	}
+}
+
 /**
  * Parse a file and return script data.
  *
@@ -1305,7 +1444,6 @@ SAU_Parse* SAU_create_Parse(const char *restrict script_arg, bool is_path) {
 	pr.st = NULL; // keep for result
 	pr.mp = NULL; // keep for result
 DONE:
-	puts("done in parser");
 	fini_Parser(&pr);
 	return o;
 }
