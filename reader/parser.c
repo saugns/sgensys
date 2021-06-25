@@ -509,7 +509,7 @@ typedef struct SAU_Parser {
 	/* node state */
 	struct ParseLevel *cur_pl;
 	SAU_ParseDurGroup *cur_dur;
-	SAU_ParseEvData *ev, *first_ev;
+	SAU_ParseEvent *ev, *first_ev;
 } SAU_Parser;
 
 /*
@@ -569,8 +569,8 @@ enum {
 	PL_DEFERRED_SUB  = 1<<0, // \a sub_f exited to attempt handling above
 	PL_BIND_MULTIPLE = 1<<1, // previous node interpreted as set of nodes
 	PL_NESTED_SCOPE  = 1<<2,
-	PL_ACTIVE_EV     = 1<<3,
-	PL_ACTIVE_OP     = 1<<4,
+	PL_OWN_EVENT     = 1<<3,
+	PL_OWN_DATA      = 1<<4,
 };
 
 /*
@@ -583,13 +583,13 @@ struct ParseLevel {
 	ParseLevel_sub_f sub_f; // identifies "location" and implicit context
 	uint32_t pl_flags;
 	uint8_t scope;
-	SAU_ParseEvData *event, *last_event;
+	SAU_ParseEvent *event, *last_event;
 	SAU_ParseOpData *operator, *last_operator;
 	SAU_ParseOpData *parent_op;
 	SAU_ParseSublist *sublist, *last_sublist;
 	SAU_SymStr *set_label; /* label assigned to next node */
 	/* timing/delay */
-	SAU_ParseEvData *composite; /* grouping of events for a voice and/or operator */
+	SAU_ParseEvent *composite; /* grouping of events for a voice and/or operator */
 	uint32_t next_wait_ms; /* added for next event */
 };
 
@@ -636,9 +636,9 @@ static void new_durgroup(SAU_Parser *restrict o) {
 
 static void end_ev_opdata(SAU_Parser *restrict o) {
 	struct ParseLevel *pl = o->cur_pl;
-	if (!(pl->pl_flags & PL_ACTIVE_OP))
+	if (!(pl->pl_flags & PL_OWN_DATA))
 		return;
-	pl->pl_flags &= ~PL_ACTIVE_OP;
+	pl->pl_flags &= ~PL_OWN_DATA;
 	ScanLookup *sl = &o->sl;
 	SAU_ParseOpData *op = pl->operator;
 	if (SAU_Ramp_ENABLED(&op->amp)) {
@@ -666,10 +666,10 @@ static void end_ev_opdata(SAU_Parser *restrict o) {
 
 static void end_event(SAU_Parser *restrict o) {
 	struct ParseLevel *pl = o->cur_pl;
-	if (!(pl->pl_flags & PL_ACTIVE_EV))
+	if (!(pl->pl_flags & PL_OWN_EVENT))
 		return;
-	pl->pl_flags &= ~PL_ACTIVE_EV;
-	SAU_ParseEvData *e = pl->event;
+	pl->pl_flags &= ~PL_OWN_EVENT;
+	SAU_ParseEvent *e = pl->event;
 	end_ev_opdata(o);
 	SAU_ParseDurGroup *dur = o->cur_dur;
 	if (!dur->range.first)
@@ -680,11 +680,11 @@ static void end_event(SAU_Parser *restrict o) {
 }
 
 static void begin_event(SAU_Parser *restrict o,
-		SAU_ParseEvData *restrict pe,
+		SAU_ParseEvent *restrict pe,
 		bool is_composite) {
 	struct ParseLevel *pl = o->cur_pl;
 	end_event(o);
-	SAU_ParseEvData *e = SAU_MemPool_alloc(o->mp, sizeof(SAU_ParseEvData));
+	SAU_ParseEvent *e = SAU_MemPool_alloc(o->mp, sizeof(SAU_ParseEvent));
 	pl->event = e;
 	e->dur = o->cur_dur;
 	e->wait_ms = pl->next_wait_ms;
@@ -707,7 +707,7 @@ static void begin_event(SAU_Parser *restrict o,
 		o->ev = e;
 		pl->composite = NULL;
 	}
-	pl->pl_flags |= PL_ACTIVE_EV;
+	pl->pl_flags |= PL_OWN_EVENT;
 }
 
 static void begin_ev_opdata(SAU_Parser *restrict o,
@@ -715,9 +715,9 @@ static void begin_ev_opdata(SAU_Parser *restrict o,
 		bool is_composite) {
 	struct ParseLevel *pl = o->cur_pl;
 	ScanLookup *sl = &o->sl;
-	SAU_ParseEvData *e = pl->event;
+	SAU_ParseEvent *e = pl->event;
 	/*
-	 * It is assumed that a valid voice event exists.
+	 * It is assumed that a valid event exists.
 	 */
 	end_ev_opdata(o);
 	SAU_ParseOpData *op = SAU_MemPool_alloc(o->mp, sizeof(SAU_ParseOpData));
@@ -780,8 +780,7 @@ static void begin_ev_opdata(SAU_Parser *restrict o,
 	op->ref.event = e;
 	/*
 	 * Add new operator to parent(s), ie. either the current event node,
-	 * or an operator node (either ordinary or representing multiple
-	 * carriers) in the case of operator linking/nesting.
+	 * or a sublist at some level.
 	 */
 	if (!pop && pl->sublist != NULL) {
 		SAU_NodeRange *list = &pl->sublist->range;
@@ -806,7 +805,7 @@ static void begin_ev_opdata(SAU_Parser *restrict o,
 		op->ref.label = pop->ref.label;
 		op->ref.label->data = op;
 	}
-	pl->pl_flags |= PL_ACTIVE_OP;
+	pl->pl_flags |= PL_OWN_DATA;
 }
 
 /*
@@ -890,9 +889,9 @@ static void leave_level(SAU_Parser *restrict o) {
 	case SCOPE_TOP:
 		break; // handled above
 	case SCOPE_BLOCK:
-		if (pl->pl_flags & PL_ACTIVE_EV) {
+		if (pl->pl_flags & PL_OWN_EVENT) {
 			end_event(o);
-			pl->parent->pl_flags |= PL_ACTIVE_EV;
+			pl->parent->pl_flags |= PL_OWN_EVENT;
 			pl->parent->event = pl->event;
 		}
 		pl->parent->last_event = pl->last_event;

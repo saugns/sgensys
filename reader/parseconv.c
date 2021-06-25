@@ -26,9 +26,9 @@
  * only allowed on the "top" operator level, so the algorithm only deals with
  * this for the events involved.
  */
-static void time_durgroup(SAU_ParseEvData *restrict e_last) {
+static void time_durgroup(SAU_ParseEvent *restrict e_last) {
 	SAU_ParseDurGroup *dur = e_last->dur;
-	SAU_ParseEvData *e, *e_after = e_last->next;
+	SAU_ParseEvent *e, *e_after = e_last->next;
 	uint32_t wait = 0, waitcount = 0;
 	for (e = dur->range.first; e != e_after; ) {
 		SAU_ParseOpData *op = e->op_data;
@@ -66,7 +66,7 @@ static inline void time_ramp(SAU_Ramp *restrict ramp,
 }
 
 static void time_operator(SAU_ParseOpData *restrict op) {
-	SAU_ParseEvData *e = op->ref.event;
+	SAU_ParseEvent *e = op->ref.event;
 	if ((op->op_flags & SAU_PDOP_NESTED) != 0 &&
 			!(op->time.flags & SAU_TIMEP_SET)) {
 		if (!(op->op_flags & SAU_PDOP_HAS_COMPOSITE))
@@ -97,7 +97,7 @@ static void time_operator(SAU_ParseOpData *restrict op) {
 	}
 }
 
-static void time_event(SAU_ParseEvData *restrict e) {
+static void time_event(SAU_ParseEvent *restrict e) {
 	/*
 	 * Adjust default ramp durations, handle silence as well as the case of
 	 * adding present event duration to wait time of next event.
@@ -112,7 +112,7 @@ static void time_event(SAU_ParseEvData *restrict e) {
 	 * Timing for composites - done before event list flattened.
 	 */
 	if (e->composite != NULL) {
-		SAU_ParseEvData *ce = e->composite;
+		SAU_ParseEvent *ce = e->composite;
 		SAU_ParseOpData *ce_op, *ce_op_prev, *e_op;
 		ce_op = ce->op_data;
 		ce_op_prev = ce_op->ref.old;
@@ -151,9 +151,9 @@ static void time_event(SAU_ParseEvData *restrict e) {
  * Such events, if attached to the passed event, will be given their place in
  * the ordinary event list.
  */
-static void flatten_events(SAU_ParseEvData *restrict e) {
-	SAU_ParseEvData *ce = e->composite;
-	SAU_ParseEvData *se = e->next, *se_prev = e;
+static void flatten_events(SAU_ParseEvent *restrict e) {
+	SAU_ParseEvent *ce = e->composite;
+	SAU_ParseEvent *se = e->next, *se_prev = e;
 	uint32_t wait_ms = 0;
 	uint32_t added_wait_ms = 0;
 	while (ce != NULL) {
@@ -180,7 +180,7 @@ static void flatten_events(SAU_ParseEvData *restrict e) {
 		 * Insert next composite before or after
 		 * the next event of the ordinary sequence.
 		 */
-		SAU_ParseEvData *ce_next = ce->next;
+		SAU_ParseEvent *ce_next = ce->next;
 		if (se->wait_ms >= (ce->wait_ms + added_wait_ms)) {
 			se->wait_ms -= ce->wait_ms + added_wait_ms;
 			added_wait_ms = 0;
@@ -189,7 +189,7 @@ static void flatten_events(SAU_ParseEvData *restrict e) {
 			se_prev = ce;
 			se_prev->next = se;
 		} else {
-			SAU_ParseEvData *se_next = se->next;
+			SAU_ParseEvent *se_next = se->next;
 			ce->wait_ms -= wait_ms;
 			added_wait_ms += ce->wait_ms;
 			wait_ms = 0;
@@ -377,7 +377,7 @@ ERROR:
  * Convert the given event data node and all associated operator data nodes.
  */
 static bool ParseConv_add_event(ParseConv *restrict o,
-		SAU_ParseEvData *restrict pe) {
+		SAU_ParseEvent *restrict pe) {
 	SAU_ScriptEvData *e = SAU_MemPool_alloc(o->mem,
 			sizeof(SAU_ScriptEvData));
 	if (!e) goto ERROR;
@@ -408,7 +408,7 @@ ERROR:
  */
 static SAU_Script *ParseConv_convert(ParseConv *restrict o,
 		SAU_Parse *restrict p) {
-	SAU_ParseEvData *pe;
+	SAU_ParseEvent *pe;
 	for (pe = p->events; pe != NULL; pe = pe->next) {
 		time_event(pe);
 		if (pe == pe->dur->range.last) time_durgroup(pe);

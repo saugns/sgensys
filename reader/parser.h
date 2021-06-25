@@ -48,8 +48,11 @@ enum {
 	SAU_PDOP_IGNORED = 1<<4, // node skipped by parseconv
 };
 
+/**
+ * Heading data for parse data types.
+ */
 typedef struct SAU_ParseData {
-	struct SAU_ParseEvData *event;
+	struct SAU_ParseEvent *event;
 	void *next_item;
 	void *old;
 	SAU_ParseSublist *sublists;
@@ -62,7 +65,7 @@ typedef struct SAU_ParseData {
  */
 typedef struct SAU_ParseOpData {
 	SAU_ParseData ref;
-	struct SAU_ParseEvData *root_event;
+	struct SAU_ParseEvent *root_event;
 	uint32_t op_flags;
 	/* operator parameters */
 	SAU_ParamAttr params;
@@ -87,25 +90,25 @@ enum {
 };
 
 /**
- * Node type for event data. Includes any voice and operator data part
- * of the event.
+ * Node type for event list. Timed list which may branch during parse,
+ * but is resolved to a flat unified list by the time parsing is done.
  */
-typedef struct SAU_ParseEvData {
-	struct SAU_ParseEvData *next;
-	struct SAU_ParseEvData *composite;
+typedef struct SAU_ParseEvent {
+	struct SAU_ParseEvent *next;
+	struct SAU_ParseEvent *composite;
 	SAU_ParseDurGroup *dur;
 	uint32_t wait_ms;
 	uint32_t ev_flags;
 	SAU_ParseOpData *op_data;
 	/* for parseconv */
 	void *ev_conv;
-} SAU_ParseEvData;
+} SAU_ParseEvent;
 
 /**
  * Type returned after processing a file.
  */
 typedef struct SAU_Parse {
-	SAU_ParseEvData *events;
+	SAU_ParseEvent *events;
 	const char *name; // currently simply set to the filename
 	SAU_ScriptOptions sopt;
 	SAU_SymTab *symtab;
