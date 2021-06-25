@@ -584,9 +584,9 @@ struct ParseLevel {
 	uint32_t pl_flags;
 	uint8_t scope;
 	SAU_ParseEvData *event, *last_event;
-	SAU_ParseOpData *operator, *first_operator, *last_operator;
+	SAU_ParseOpData *operator, *last_operator;
 	SAU_ParseOpData *parent_op, *op_prev;
-	SAU_ParseSublist *op_scope;
+	SAU_ParseSublist *op_scope, *last_op_scope;
 	SAU_SymStr *set_label; /* label assigned to next node */
 	/* timing/delay */
 	SAU_ParseEvData *composite; /* grouping of events for a voice and/or operator */
@@ -722,10 +722,7 @@ static void begin_operator(SAU_Parser *restrict o,
 	end_operator(o);
 	SAU_ParseOpData *op = SAU_MemPool_alloc(o->mp, sizeof(SAU_ParseOpData));
 	pl->operator = op;
-	if (!pl->first_operator)
-		pl->first_operator = op;
-	if (!is_composite && pl->last_operator != NULL)
-		pl->last_operator->next_bound = op;
+	pl->last_op_scope = NULL; /* is for this node */
 	/*
 	 * Initialize node.
 	 */
@@ -752,7 +749,7 @@ static void begin_operator(SAU_Parser *restrict o,
 			do {
 				if (max_time < mpop->time.v_ms)
 					max_time = mpop->time.v_ms;
-			} while ((mpop = mpop->next_bound) != NULL);
+			} while ((mpop = mpop->next_item) != NULL);
 			op->op_flags |= SAU_PDOP_MULTIPLE;
 			op->time.v_ms = max_time;
 			pl->pl_flags &= ~PL_BIND_MULTIPLE;
@@ -791,7 +788,7 @@ static void begin_operator(SAU_Parser *restrict o,
 		if (!list->first)
 			list->first = op;
 		else
-			((SAU_ParseOpData*) list->last)->range_next = op;
+			((SAU_ParseOpData*) list->last)->next_item = op;
 		list->last = op;
 	} else {
 		e->op_data = op;
@@ -859,6 +856,7 @@ static void enter_level(SAU_Parser *restrict o, struct ParseLevel *restrict pl,
 		break; // handled above
 	case SCOPE_BLOCK:
 		pl->op_scope = parent_pl->op_scope;
+		pl->last_op_scope = parent_pl->last_op_scope;
 		break;
 	case SCOPE_BIND:
 		pl->op_scope = create_op_scope(use_type, o->mp);
@@ -899,6 +897,7 @@ static void leave_level(SAU_Parser *restrict o) {
 		}
 		if (pl->last_event != NULL)
 			pl->parent->last_event = pl->last_event;
+		pl->parent->last_op_scope = pl->last_op_scope;
 		break;
 	case SCOPE_BIND:
 		/*
@@ -906,9 +905,9 @@ static void leave_level(SAU_Parser *restrict o) {
 		 * for the operator nodes in this scope,
 		 * provided any are present.
 		 */
-		if (pl->first_operator != NULL) {
+		if (pl->op_scope->range.first != NULL) {
 			pl->parent->pl_flags |= PL_BIND_MULTIPLE;
-			begin_node(o, pl->first_operator, false);
+			begin_node(o, pl->op_scope->range.first, false);
 		}
 		break;
 	case SCOPE_NEST: {
@@ -918,8 +917,8 @@ static void leave_level(SAU_Parser *restrict o) {
 		if (!parent_op->nest_scopes)
 			parent_op->nest_scopes = pl->op_scope;
 		else
-			parent_op->last_nest_scope->next = pl->op_scope;
-		parent_op->last_nest_scope = pl->op_scope;
+			pl->parent->last_op_scope->next = pl->op_scope;
+		pl->parent->last_op_scope = pl->op_scope;
 		break; }
 	default:
 		break;
@@ -1145,7 +1144,6 @@ static void parse_level(SAU_Parser *restrict o,
 				if (o->call_level > 1)
 					goto RETURN;
 				pl.sub_f = NULL;
-				pl.first_operator = NULL;
 			}
 			break;
 		case '\'':

@@ -91,7 +91,7 @@ static void time_operator(SAU_ParseOpData *restrict op) {
 	for (SAU_ParseSublist *scope = op->nest_scopes;
 			scope != NULL; scope = scope->next) {
 		SAU_ParseOpData *sub_op = scope->range.first;
-		for (; sub_op != NULL; sub_op = sub_op->range_next) {
+		for (; sub_op != NULL; sub_op = sub_op->next_item) {
 			time_operator(sub_op);
 		}
 	}
@@ -308,7 +308,7 @@ static bool ParseConv_add_ops(ParseConv *restrict o,
 	if (!pod_list)
 		return true;
 	SAU_ParseOpData *pod = pod_list->first;
-	for (; pod != NULL; pod = pod->range_next) {
+	for (; pod != NULL; pod = pod->next_item) {
 		// TODO: handle multiple operator nodes
 		if (pod->op_flags & SAU_PDOP_MULTIPLE) {
 			// TODO: handle multiple operator nodes
@@ -346,7 +346,7 @@ static bool ParseConv_link_ops(ParseConv *restrict o,
 		if (!*od_list) goto ERROR;
 	}
 	SAU_ParseOpData *pod = pod_list->first;
-	for (; pod != NULL; pod = pod->range_next) {
+	for (; pod != NULL; pod = pod->next_item) {
 		if (pod->op_flags & SAU_PDOP_IGNORED) continue;
 		SAU_ScriptOpData *od = pod->op_conv;
 		if (!od) goto ERROR;

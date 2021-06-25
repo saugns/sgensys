@@ -52,12 +52,10 @@ enum {
  * Node type for operator data.
  */
 typedef struct SAU_ParseOpData {
-	struct SAU_ParseOpData *range_next;
+	struct SAU_ParseOpData *next_item;
 	struct SAU_ParseEvData *event, *root_event;
 	struct SAU_ParseOpData *prev; /* preceding for same op(s) */
 	SAU_ParseSublist *nest_scopes;
-	SAU_ParseSublist *last_nest_scope;
-	struct SAU_ParseOpData *next_bound;
 	SAU_SymStr *label;
 	uint32_t op_flags;
 	/* operator parameters */
