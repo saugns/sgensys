@@ -841,9 +841,6 @@ static void enter_level(SAU_Parser *restrict o, struct ParseLevel *restrict pl,
 	if (!parent_pl) {
 		// handle newscope == SCOPE_TOP here
 		if (!o->cur_dur) new_durgroup(o);
-		if (use_type != SAU_POP_CARR) {
-			pl->sublist = create_sublist(use_type, o->mp);
-		}
 		return;
 	}
 	pl->parent = parent_pl;
@@ -1354,6 +1351,7 @@ static void time_opdata(SAU_ParseOpData *restrict op) {
 		time_ramp(&op->freq2, op->time.v_ms);
 		time_ramp(&op->amp, op->time.v_ms);
 		time_ramp(&op->amp2, op->time.v_ms);
+		// op->pan.flags |= SAU_RAMPP_TIME; // TODO: revisit semantics
 		if (!(op->op_flags & SAU_PDOP_SILENCE_ADDED)) {
 			op->time.v_ms += op->silence_ms;
 			op->op_flags |= SAU_PDOP_SILENCE_ADDED;
@@ -1378,7 +1376,6 @@ static void time_event(SAU_ParseEvent *restrict e) {
 	 * Adjust default ramp durations, handle silence as well as the case of
 	 * adding present event duration to wait time of next event.
 	 */
-	// e->pan.flags |= SAU_RAMPP_TIME; // TODO: revisit semantics
 	SAU_ParseOpData *op;
 	op = e->op_data;
 	if (op != NULL) {
