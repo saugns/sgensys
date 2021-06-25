@@ -66,7 +66,7 @@ static inline void time_ramp(SAU_Ramp *restrict ramp,
 }
 
 static void time_operator(SAU_ParseOpData *restrict op) {
-	SAU_ParseEvData *e = op->event;
+	SAU_ParseEvData *e = op->ref.event;
 	if ((op->op_flags & SAU_PDOP_NESTED) != 0 &&
 			!(op->time.flags & SAU_TIMEP_SET)) {
 		if (!(op->op_flags & SAU_PDOP_HAS_COMPOSITE))
@@ -88,10 +88,10 @@ static void time_operator(SAU_ParseOpData *restrict op) {
 			e->next->wait_ms += op->time.v_ms;
 		e->ev_flags &= ~SAU_PDEV_ADD_WAIT_DURATION;
 	}
-	for (SAU_ParseSublist *scope = op->nest_scopes;
+	for (SAU_ParseSublist *scope = op->ref.sublists;
 			scope != NULL; scope = scope->next) {
 		SAU_ParseOpData *sub_op = scope->range.first;
-		for (; sub_op != NULL; sub_op = sub_op->next_item) {
+		for (; sub_op != NULL; sub_op = sub_op->ref.next_item) {
 			time_operator(sub_op);
 		}
 	}
@@ -115,7 +115,7 @@ static void time_event(SAU_ParseEvData *restrict e) {
 		SAU_ParseEvData *ce = e->composite;
 		SAU_ParseOpData *ce_op, *ce_op_prev, *e_op;
 		ce_op = ce->op_data;
-		ce_op_prev = ce_op->prev;
+		ce_op_prev = ce_op->ref.old;
 		e_op = ce_op_prev;
 		e_op->time.flags |= SAU_TIMEP_SET; /* always used from now on */
 		for (;;) {
@@ -228,8 +228,9 @@ static OpContext *ParseConv_update_opcontext(ParseConv *restrict o,
 		SAU_ScriptOpData *restrict od,
 		SAU_ParseOpData *restrict pod) {
 	OpContext *oc = NULL;
+	SAU_ParseOpData *pod_old = pod->ref.old;
 	SAU_ScriptEvData *e = o->ev;
-	if (!pod->prev) {
+	if (!pod_old) {
 		oc = SAU_MemPool_alloc(o->tmp, sizeof(OpContext));
 		if (!oc)
 			return NULL;
@@ -238,7 +239,7 @@ static OpContext *ParseConv_update_opcontext(ParseConv *restrict o,
 			od->op_flags |= SAU_SDOP_ADD_CARRIER;
 		}
 	} else {
-		oc = pod->prev->op_context;
+		oc = pod_old->op_context;
 		if (!oc) {
 			/*
 			 * This can happen if earlier nodes were excluded,
@@ -308,7 +309,7 @@ static bool ParseConv_add_ops(ParseConv *restrict o,
 	if (!pod_list)
 		return true;
 	SAU_ParseOpData *pod = pod_list->first;
-	for (; pod != NULL; pod = pod->next_item) {
+	for (; pod != NULL; pod = pod->ref.next_item) {
 		// TODO: handle multiple operator nodes
 		if (pod->op_flags & SAU_PDOP_MULTIPLE) {
 			// TODO: handle multiple operator nodes
@@ -319,7 +320,7 @@ static bool ParseConv_add_ops(ParseConv *restrict o,
 			if (pod->op_flags & SAU_PDOP_IGNORED) continue;
 			goto ERROR;
 		}
-		for (SAU_ParseSublist *scope = pod->nest_scopes;
+		for (SAU_ParseSublist *scope = pod->ref.sublists;
 				scope != NULL; scope = scope->next) {
 			if (!ParseConv_add_ops(o, &scope->range)) goto ERROR;
 		}
@@ -346,7 +347,7 @@ static bool ParseConv_link_ops(ParseConv *restrict o,
 		if (!*od_list) goto ERROR;
 	}
 	SAU_ParseOpData *pod = pod_list->first;
-	for (; pod != NULL; pod = pod->next_item) {
+	for (; pod != NULL; pod = pod->ref.next_item) {
 		if (pod->op_flags & SAU_PDOP_IGNORED) continue;
 		SAU_ScriptOpData *od = pod->op_conv;
 		if (!od) goto ERROR;
@@ -356,7 +357,7 @@ static bool ParseConv_link_ops(ParseConv *restrict o,
 				!SAU_RefList_add(*od_list, od, 0, o->mem))
 			goto ERROR;
 		SAU_RefList *last_mod_list = NULL;
-		for (SAU_ParseSublist *scope = pod->nest_scopes;
+		for (SAU_ParseSublist *scope = pod->ref.sublists;
 				scope != NULL; scope = scope->next) {
 			SAU_RefList *next_mod_list = NULL;
 			if (!ParseConv_link_ops(o, &next_mod_list,
