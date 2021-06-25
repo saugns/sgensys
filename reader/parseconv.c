@@ -276,7 +276,7 @@ static bool ParseConv_add_opdata(ParseConv *restrict o,
 	pod->op_conv = od;
 	od->root_event = pod->root_event->ev_conv;
 	od->event = e;
-	/* next_bound */
+	/* ref.next_item */
 	/* op_flags */
 	od->params = pod->params;
 	od->time = pod->time;
@@ -301,10 +301,9 @@ ERROR:
 }
 
 /*
- * Recursively create needed operator data nodes,
- * visiting new operator nodes as they branch out.
+ * Recursively create needed nodes for part of parse.
  */
-static bool ParseConv_add_ops(ParseConv *restrict o,
+static bool ParseConv_add_nodes(ParseConv *restrict o,
 		const SAU_NodeRange *restrict pod_list) {
 	if (!pod_list)
 		return true;
@@ -322,7 +321,7 @@ static bool ParseConv_add_ops(ParseConv *restrict o,
 		}
 		for (SAU_ParseSublist *scope = pod->ref.sublists;
 				scope != NULL; scope = scope->next) {
-			if (!ParseConv_add_ops(o, &scope->range)) goto ERROR;
+			if (!ParseConv_add_nodes(o, &scope->range)) goto ERROR;
 		}
 	}
 	return true;
@@ -331,10 +330,9 @@ ERROR:
 }
 
 /*
- * Recursively fill in lists for operator node graph,
- * visiting all linked operator nodes as they branch out.
+ * Recursively fill in lists for conversion of part of parse after nodes made.
  */
-static bool ParseConv_link_ops(ParseConv *restrict o,
+static bool ParseConv_link_nodes(ParseConv *restrict o,
 		SAU_RefList *restrict *od_list,
 		const SAU_NodeRange *restrict pod_list,
 		uint8_t list_type) {
@@ -360,7 +358,7 @@ static bool ParseConv_link_ops(ParseConv *restrict o,
 		for (SAU_ParseSublist *scope = pod->ref.sublists;
 				scope != NULL; scope = scope->next) {
 			SAU_RefList *next_mod_list = NULL;
-			if (!ParseConv_link_ops(o, &next_mod_list,
+			if (!ParseConv_link_nodes(o, &next_mod_list,
 						&scope->range,
 						scope->use_type)) goto ERROR;
 			if (!od->mod_lists)
@@ -392,8 +390,8 @@ static bool ParseConv_add_event(ParseConv *restrict o,
 	e->wait_ms = pe->wait_ms;
 	/* ev_flags */
 	const SAU_NodeRange ev_op = {.first = pe->op_data};
-	if (!ParseConv_add_ops(o, &ev_op)) goto ERROR;
-	if (!ParseConv_link_ops(o, &e->carriers,
+	if (!ParseConv_add_nodes(o, &ev_op)) goto ERROR;
+	if (!ParseConv_link_nodes(o, &e->carriers,
 				&ev_op, SAU_POP_CARR)) goto ERROR;
 	return true;
 ERROR:
